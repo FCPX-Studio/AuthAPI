@@ -54,6 +54,8 @@ class PaddleTransactionCompletedEvent(BaseModel):
     def build_order_request(self, customer: PaddleCustomer) -> OrderLicensesRequest:
         """
         Build OrderLicensesRequest instance, one license request per item
+        Trial items (`trial` key in price custom_data) are skipped: trials are
+        created by the installer through /license/activate_trial
 
         Args:
             customer (PaddleCustomer): Transaction customer, fetched from Paddle API
@@ -70,12 +72,13 @@ class PaddleTransactionCompletedEvent(BaseModel):
                     customer=customer,
                 )
                 for item in self.data.items
+                if not item.price.is_trial
             ],
         )
     
 
-class ActivateLicenseRequest(BaseModel):
-    license_key: str
+class ActivationRequestBase(BaseModel):
+    """Product and machine informations sent by the installer"""
     product_id: str
     machine_fingerprint: str
     machine_name: str
@@ -92,5 +95,13 @@ class ActivateLicenseRequest(BaseModel):
             fcpx_version=self.fcpx_version,
             macos_version=self.macOS_version,
         )
+
+
+class ActivateLicenseRequest(ActivationRequestBase):
+    license_key: str
+
+
+class ActivateTrialRequest(ActivationRequestBase):
+    pass
 
     

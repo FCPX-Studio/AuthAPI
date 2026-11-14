@@ -53,6 +53,8 @@ class ProductRow(Base):
     )
     page_display_id: Mapped[str] = mapped_column(ForeignKey("ProductPageDisplay.id", ondelete="RESTRICT"), index=True)
     creation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # NULL = no trial available; otherwise UserTrial.expires_at = created_at + trial_duration.
+    trial_duration: Mapped[timedelta | None] = mapped_column(Interval)
 
     version: Mapped["ProductVersionRow | None"] = relationship(foreign_keys=[version_id], post_update=True)
     versions: Mapped[list["ProductVersionRow"]] = relationship(

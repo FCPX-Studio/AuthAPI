@@ -4,8 +4,12 @@
 # SITE_ADDRESS (from .env) is the VPS public IP for now, e.g. 51.x.x.x.
 # Let's Encrypt only issues IP certificates under the "shortlived" profile
 # (~6 days); Caddy renews them automatically.
-# When a domain is ready, set SITE_ADDRESS=api.example.com — the tls block
-# can then be removed to get regular 90-day certificates.
+#
+# Transition: the domain names below are served alongside the IP while the
+# domain is being tested. They also get short-lived certificates for now.
+# Once confirmed, set SITE_ADDRESS=api.fcpxstudio.shop, drop the IP-only
+# parts (tls block, default_sni) to get regular 90-day certificates, and
+# move fcpxstudio.shop to the website's own site block.
 
 {
 	# Clients connecting by IP send no SNI (IPs aren't allowed in SNI), so
@@ -13,7 +17,7 @@
 	default_sni {$SITE_ADDRESS}
 }
 
-{$SITE_ADDRESS} {
+{$SITE_ADDRESS}, api.fcpxstudio.shop, fcpxstudio.shop {
 	tls {
 		issuer acme {
 			profile shortlived

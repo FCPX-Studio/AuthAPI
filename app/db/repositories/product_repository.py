@@ -1,10 +1,11 @@
 from sqlalchemy.orm import Session, sessionmaker
 from app.db.database import Database
-from app.db.models.product import ProductLicenseRow
+from app.db.models.product import ProductLicenseRow, ProductRow
 
 from app.schemas.product import ProductLicense
 
 from typing import Optional
+from datetime import timedelta
 
 from sqlalchemy import select
 
@@ -41,3 +42,16 @@ class ProductRepository(Database):
         with self.session() as s:
             row = s.get(ProductLicenseRow, product_license_id)
             return self._to_product_license(row) if row else None
+
+    def get_trial_duration(self, product_id: str) -> Optional[timedelta]:
+        """
+        Retrieve the trial duration of a product
+
+        Args:
+            product_id (str): Product ID (FxPlug ID)
+
+        Returns:
+            Optional[timedelta]: Trial duration, None if the product is unknown or has no trial
+        """
+        with self.session() as s:
+            return s.scalar(select(ProductRow.trial_duration).where(ProductRow.id == product_id))

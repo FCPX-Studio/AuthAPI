@@ -30,6 +30,14 @@ class UserActivation(BaseModel):
     macos_version: Optional[str] = None
     last_activated_at: Optional[AwareDatetime] = None
 
+class UserTrial(BaseModel):
+    id: str
+    product_id: str
+    machine_fingerprint: str
+    created_at: AwareDatetime
+    expires_at: AwareDatetime
+    last_activated_at: AwareDatetime
+
 class SignedActivation(BaseModel):
     payload: str
     signature_algorithm: str

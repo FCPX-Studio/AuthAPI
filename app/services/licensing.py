@@ -1,12 +1,19 @@
 from config import settings
 
-from app.schemas.requests import OrderLicensesRequest, ProductLicenseRequest, ActivateLicenseRequest
+from app.schemas.requests import (
+    OrderLicensesRequest,
+    ProductLicenseRequest,
+    ActivateLicenseRequest,
+    ActivateTrialRequest,
+)
 from app.schemas.user import User, UserLicense, LicenseToken
 from app.schemas.exceptions import (
     InvalideLicenseKeyError,
     ExpiredLicenseError,
     ActivationLimitReachedError,
     ProductLicenseNotFoundError,
+    TrialNotAvailableError,
+    TrialExpiredError,
 )
 from app.db.repositories import LicenseRepository, ProductRepository
 from app.keytool import Keytool
@@ -200,5 +207,58 @@ class Licensing:
             activation_id=activation_id,
             activation_seats=license.activation_seats,
             activations_used=len(fingerprint_activations),
+            license=signed_activation
+        )
+
+    def activate_trial(
+            self,
+            activation_request: ActivateTrialRequest
+        ) -> LicenseToken:
+        """
+        Create or refresh the trial of a product on a machine, then create a signed token.
+        One trial per product and machine: reactivating keeps the original expiration date
+        Check for validation
+            - Product offers a trial (Product.trial_duration)
+            - Trial expiration
+
+        Args:
+            activation_request (ActivateTrialRequest): Product and machine informations
+
+        Returns:
+            LicenseToken: Signed trial token (expires at the end of the trial)
+
+        Raises:
+            TrialNotAvailableError: Unknown product or no trial for this product
+            TrialExpiredError: This machine already used its trial for this product
+        """
+        product_id = activation_request.product_id
+        now = self._now()
+
+        trial_duration = self.product_repository.get_trial_duration(product_id)
+        if trial_duration is None:
+            raise TrialNotAvailableError(product_id)
+
+        trial = self.repository.upsert_trial(
+            product_id=product_id,
+            activation=activation_request.build_activation(),
+            expires_at=now + trial_duration,
+        )
+        if now >= trial.expires_at:
+            raise TrialExpiredError(product_id, trial.expires_at)
+
+        signed_activation = self.keytool.create_signed_license_activation(
+            format_version=settings.LICENSE_TOKEN_FORMAT_VERSION,
+            license_id=trial.id,
+            product_id=trial.product_id,
+            fingerprint=trial.machine_fingerprint,
+            issued_at=now,
+            expire_at=trial.expires_at
+        )
+
+        # A trial is bound to a single machine
+        return LicenseToken(
+            activation_id=trial.id,
+            activation_seats=1,
+            activations_used=1,
             license=signed_activation
         )

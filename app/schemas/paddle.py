@@ -1,7 +1,7 @@
 from app.schemas.user import User
 
 from pydantic import AwareDatetime, BaseModel, Field
-from typing import Optional
+from typing import Any, Optional
 
 
 class PaddleCustomer(BaseModel):
@@ -40,6 +40,12 @@ class PaddlePrice(BaseModel):
     """Price of a transaction item"""
     id: str                                 # Paddle price ID (pri_…)
     product_id: str                         # Paddle product ID (pro_…), matches ProductLicense.id
+    custom_data: Optional[dict[str, Any]] = None    # Price custom data, set in Paddle dashboard
+
+    @property
+    def is_trial(self) -> bool:
+        """Trial price: a `trial` key exists in custom_data (value is ignored)"""
+        return "trial" in (self.custom_data or {})
 
 
 class PaddleTransactionItem(BaseModel):

@@ -1,11 +1,12 @@
 from sqlalchemy.orm import Session, joinedload, sessionmaker
 from app.db.database import Database
-from app.db.models.users import UserRow, UserLicenseRow, UserActivationRow, UserMachineRow
+from app.db.models.users import UserRow, UserLicenseRow, UserActivationRow, UserMachineRow, UserTrialRow
 
-from app.schemas.user import User, UserLicense, UserActivation
+from app.schemas.user import User, UserLicense, UserActivation, UserTrial
 from app.schemas.exceptions import InvalideLicenseKeyError, ActivationNotFoundError
 
 from typing import Optional
+from datetime import datetime
 
 from sqlalchemy import exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -45,6 +46,44 @@ class LicenseRepository(Database):
             macos_version=row.macos_version,
             last_activated_at=row.last_activated_at,
         )
+
+    @staticmethod
+    def _to_trial(row: UserTrialRow, machine_fingerprint: str) -> UserTrial:
+        return UserTrial(
+            id=row.id,
+            product_id=row.product_id,
+            machine_fingerprint=machine_fingerprint,
+            created_at=row.created_at,
+            expires_at=row.expires_at,
+            last_activated_at=row.last_activated_at,
+        )
+
+    # --- HELPERS
+
+    @staticmethod
+    def _upsert_machine(s: Session, activation: UserActivation) -> str:
+        """
+        Create the machine from its fingerprint, or refresh its name if already known
+        (a machine is shared by every license and trial activated on it)
+        Runs inside the caller's session / transaction
+
+        Args:
+            s (Session): Open session
+            activation (UserActivation): Activation holding the machine informations
+
+        Returns:
+            str: Machine ID
+        """
+        stmt = insert(UserMachineRow).values(
+            machine_fingerprint=activation.machine_fingerprint,
+            machine_name=activation.machine_name,
+        )
+        return s.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[UserMachineRow.machine_fingerprint],
+                set_=dict(machine_name=stmt.excluded.machine_name),
+            ).returning(UserMachineRow.id)
+        ).scalar_one()
 
     # --- GET
 
@@ -250,17 +289,7 @@ class LicenseRepository(Database):
             if license_id is None:
                 raise InvalideLicenseKeyError(license_key)
 
-            # Upsert the machine on its fingerprint and get its ID back
-            machine_stmt = insert(UserMachineRow).values(
-                machine_fingerprint=activation.machine_fingerprint,
-                machine_name=activation.machine_name,
-            )
-            machine_id = s.execute(
-                machine_stmt.on_conflict_do_update(
-                    index_elements=[UserMachineRow.machine_fingerprint],
-                    set_=dict(machine_name=machine_stmt.excluded.machine_name),
-                ).returning(UserMachineRow.id)
-            ).scalar_one()
+            machine_id = self._upsert_machine(s, activation)
 
             values = dict(
                 license_id=license_id,
@@ -284,3 +313,48 @@ class LicenseRepository(Database):
             ).returning(UserActivationRow.id)
 
             return s.execute(stmt).scalar_one()
+
+    def upsert_trial(
+            self,
+            product_id: str,
+            activation: UserActivation,
+            expires_at: datetime
+        ) -> UserTrial:
+        """
+        Create the trial of a product on a machine, or refresh it if this machine
+        already has one (one trial per product and machine, safe against concurrent requests)
+        On refresh only app_version, fcpx_version, macos_version and last_activated_at
+        are updated: created_at and expires_at keep their original values, so the caller
+        must check expiration on the returned trial
+
+        Args:
+            product_id (str): Product ID (FxPlug ID)
+            activation (UserActivation): Machine and activation informations
+            expires_at (datetime): Expiration date, only used if the trial is created
+
+        Returns:
+            UserTrial: Created or existing trial
+        """
+        with self.session() as s:
+            machine_id = self._upsert_machine(s, activation)
+
+            stmt = insert(UserTrialRow).values(
+                product_id=product_id,
+                machine_id=machine_id,
+                app_version=activation.app_version,
+                fcpx_version=activation.fcpx_version,
+                macos_version=activation.macos_version,
+                expires_at=expires_at,
+            )
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_UserTrial_product_machine",
+                set_=dict(
+                    app_version=stmt.excluded.app_version,
+                    fcpx_version=stmt.excluded.fcpx_version,
+                    macos_version=stmt.excluded.macos_version,
+                    last_activated_at=func.now(),
+                ),
+            ).returning(UserTrialRow)
+
+            row = s.scalars(stmt).one()
+            return self._to_trial(row, activation.machine_fingerprint)

@@ -2,13 +2,15 @@ from fastapi import APIRouter, Request, HTTPException
 from paddle_billing.Exceptions.ApiError import ApiError
 from requests import RequestException
 
-from app.schemas.requests import PaddleTransactionCompletedEvent, ActivateLicenseRequest
+from app.schemas.requests import PaddleTransactionCompletedEvent, ActivateLicenseRequest, ActivateTrialRequest
 from app.schemas.user import LicenseToken
 from app.schemas.exceptions import (
     InvalideLicenseKeyError,
     ExpiredLicenseError,
     ActivationLimitReachedError,
     ProductLicenseNotFoundError,
+    TrialNotAvailableError,
+    TrialExpiredError,
 )
 from app.services import Licensing, Paddle
 
@@ -23,13 +25,14 @@ router = APIRouter(
 async def create(body: PaddleTransactionCompletedEvent, request: Request) -> list[str]:
     """
     Create license keys for an order
+    Trial items (`trial` key in price custom_data) are skipped, no license is created for them
 
     Args:
         body (PaddleTransactionCompletedEvent): Paddle transaction.completed body
         request (Request): Default request argument
 
     Returns:
-        list[str]: License keys, in the same order as the items
+        list[str]: License keys, in the same order as the non-trial items (empty if only trials)
 
     Raises:
         HTTPException: 401 for bad body signature
@@ -46,7 +49,11 @@ async def create(body: PaddleTransactionCompletedEvent, request: Request) -> lis
             status_code=401,
             detail="Cannot validate webhook signature"
         )
-    
+
+    # Trial only order: nothing to create, skip the Paddle customer lookup
+    if all(item.price.is_trial for item in body.data.items):
+        return []
+
     # Retrieve user
     try:
         customer = await paddle.get_customer(body.data.customer_id)
@@ -86,7 +93,9 @@ async def activate(body: ActivateLicenseRequest, request: Request) -> LicenseTok
         LicenseToken: Signed token FxPlug can validate
 
     Raises:
-        HTTPException: 404 unknown key or wrong product, 403 expired, 409 no seat left
+        HTTPException: 404 unknown key or wrong product
+        HTTPException: 403 expired
+        HTTPException: 409 no seat left
     """
     licensing: Licensing = request.app.state.licensing
 
@@ -106,6 +115,40 @@ async def activate(body: ActivateLicenseRequest, request: Request) -> LicenseTok
         raise HTTPException(
             status_code=409,
             detail=f"Activation limit reached: {e.activation_limit} / {e.activation_limit} computer registered"
+        )
+
+    return token
+
+
+@router.post('/activate_trial', response_model=LicenseToken)
+async def activate_trial(body: ActivateTrialRequest, request: Request) -> LicenseToken:
+    """
+    Create (or refresh) and activate the trial of a product for a specific machine
+    One trial per product and machine, reactivating keeps the original expiration date
+
+    Args:
+        body (ActivateTrialRequest): Product and machine informations
+        request (Request): Default request argument
+
+    Returns:
+        LicenseToken: Signed trial token FxPlug can validate
+
+    Raises:
+        HTTPException: 404 unknown product or no trial available, 403 trial expired
+    """
+    licensing: Licensing = request.app.state.licensing
+
+    try:
+        token = licensing.activate_trial(body)
+    except TrialNotAvailableError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No trial available for product '{e.product_id}'"
+        )
+    except TrialExpiredError as e:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Trial expired on {e.expiration_date}"
         )
 
     return token

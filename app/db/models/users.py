@@ -76,6 +76,7 @@ class UserMachineRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     activations: Mapped[list["UserActivationRow"]] = relationship(back_populates="machine")
+    trials: Mapped[list["UserTrialRow"]] = relationship(back_populates="machine")
 
 
 class UserActivationRow(Base):
@@ -98,3 +99,31 @@ class UserActivationRow(Base):
 
     license: Mapped["UserLicenseRow"] = relationship(back_populates="activations")
     machine: Mapped["UserMachineRow"] = relationship(back_populates="activations")
+
+
+class UserTrialRow(Base):
+    """Anonymous trial of a Product, bound to a single machine (no Paddle user or order)."""
+
+    __tablename__ = "UserTrial"
+    # One trial per product and machine: a second trial on the same machine is rejected.
+    __table_args__ = (
+        UniqueConstraint("product_id", "machine_id", name="uq_UserTrial_product_machine"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True, default=_prefixed_id("trl"))
+    # Software unlocked by the trial (FxPlug ID).
+    product_id: Mapped[str] = mapped_column(ForeignKey("Product.id", ondelete="RESTRICT"), index=True)
+    machine_id: Mapped[str] = mapped_column(ForeignKey("UserMachine.id", ondelete="CASCADE"), index=True)
+    # Informative, sent by the installer (latest activation).
+    app_version: Mapped[str | None] = mapped_column(String(32))
+    fcpx_version: Mapped[str | None] = mapped_column(String(32))
+    macos_version: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Set once at creation (created_at + trial ProductLicense.life_duration), never updated on reactivation.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_activated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    product: Mapped["ProductRow"] = relationship()
+    machine: Mapped["UserMachineRow"] = relationship(back_populates="trials")

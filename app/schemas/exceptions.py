@@ -28,3 +28,13 @@ class ProductLicenseNotFoundError(Exception):
     def __init__(self, product_license_id: str) -> None:
         self.product_license_id = product_license_id
         super().__init__(f"Unknown product license '{product_license_id}'")
+class TrialNotAvailableError(Exception):
+    def __init__(self, product_id: str) -> None:
+        self.product_id = product_id
+        super().__init__(f"No trial available for product '{product_id}'")
+
+class TrialExpiredError(Exception):
+    def __init__(self, product_id: str, expiration_date: datetime) -> None:
+        self.product_id = product_id
+        self.expiration_date = expiration_date
+        super().__init__(f"Trial of product '{product_id}' expired on {expiration_date}")
