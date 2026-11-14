@@ -23,6 +23,8 @@ class AuthenticatorSettings(BaseSettings):
     APP_NAME: str = "Authenticator API"
     APP_DESCRIPTION: str = "Manage authentication and product licensing"
     APP_VERSION: str = "1.0"
+    # Public URL version: every route and the API docs are served under /<API_VERSION>
+    API_VERSION: str = "v1"
 
     # Database
     DB_HOST: SecretStr

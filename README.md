@@ -13,9 +13,9 @@ Built with FastAPI, SQLAlchemy and PostgreSQL.
 ```
  fcpxstudio website                Authenticator                  Customer Mac (plugin)
  ──────────────────                ─────────────                  ─────────────────────
- purchase completed ──POST /license/create──▶ generate key
+ purchase completed ─POST /v1/license/create─▶ generate key
                      ◀──────── "ABCD-EFGH-JKMN-PQRS"
-                                                     ◀──POST /license/activate── key + machine fingerprint
+                                                     ◀─POST /v1/license/activate─ key + machine fingerprint
                                    check product, expiry,
                                    activation limit
                                    sign token (Ed25519) ──────▶ verify signature with public key,
@@ -83,7 +83,7 @@ uvicorn app.main:app --reload
 
 Database tables are created automatically on startup. Existing tables are never altered, so schema changes need a manual migration.
 
-Interactive API docs are served at `http://localhost:8000/docs`.
+Interactive API docs are served at `http://localhost:8000/v1/docs`.
 
 ### Deploy (Docker, HTTPS)
 
@@ -106,7 +106,7 @@ The API is then at `https://<VPS-IP>/`, with no browser warning. Let's Encrypt o
 
 ## API
 
-### `POST /license/create`
+### `POST /v1/license/create`
 
 Creates a license for a product and returns its key.
 
@@ -132,7 +132,7 @@ Creates a license for a product and returns its key.
 "ABCD-EFGH-JKMN-PQRS"
 ```
 
-### `POST /license/activate`
+### `POST /v1/license/activate`
 
 Validates a license key for a product and registers the calling machine.
 
