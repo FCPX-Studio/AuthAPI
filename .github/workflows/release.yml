@@ -1,0 +1,37 @@
+name: Release
+
+# Pushing a tag (git tag v1.0.0 && git push origin v1.0.0) builds the image and
+# publishes it as ghcr.io/fcpx-studio/auth-api:<tag>.
+# Deploy it by setting AUTH_API_TAG in the deploy repo's .env on the VPS.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/fcpx-studio/auth-api:${{ github.ref_name }}
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          # Read-only token for the private FCPX-Studio/db repo (requirements.txt),
+          # mounted only during pip install (see the Dockerfile)
+          secrets: |
+            git_credentials=https://x-access-token:${{ secrets.DB_REPO_TOKEN }}@github.com
