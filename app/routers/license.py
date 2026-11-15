@@ -25,7 +25,7 @@ router = APIRouter(
 async def create(body: PaddleTransactionCompletedEvent, request: Request) -> list[str]:
     """
     Create license keys for an order
-    Trial items (`trial` key in price custom_data) are skipped, no license is created for them
+    Trial items (ProductLicense.is_trial) are skipped, no license is created for them
 
     Args:
         body (PaddleTransactionCompletedEvent): Paddle transaction.completed body
@@ -50,10 +50,6 @@ async def create(body: PaddleTransactionCompletedEvent, request: Request) -> lis
             detail="Cannot validate webhook signature"
         )
 
-    # Trial only order: nothing to create, skip the Paddle customer lookup
-    if all(item.price.is_trial for item in body.data.items):
-        return []
-
     # Retrieve user
     try:
         customer = await paddle.get_customer(body.data.customer_id)
@@ -70,12 +66,12 @@ async def create(body: PaddleTransactionCompletedEvent, request: Request) -> lis
 
     # Create license
     try:
-        order_request = body.build_order_request(customer)
-        license_keys = licensing.create_licenses(order_request)
+        paddle_order = body.build_paddle_order(customer)
+        license_keys = licensing.create_licenses(paddle_order)
     except ProductLicenseNotFoundError as e:
         raise HTTPException(
             status_code=404,
-            detail=f"Unknown product license '{e.product_license_id}'"
+            detail=f"Unknown product license for Paddle price '{e.paddle_price_id}'"
         )
 
     return license_keys

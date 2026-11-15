@@ -1,20 +1,17 @@
-from sqlalchemy.orm import Session, sessionmaker
-from app.db.database import Database
-from app.db.models.product import ProductLicenseRow, ProductRow
+from app.db.database import Repository
+from db.models import ProductLicenseRow, ProductRow
 
-from app.schemas.product import ProductLicense
+from app.schemas.product import ProductLicense, ProductTrial
 
 from typing import Optional
-from datetime import timedelta
 
 from sqlalchemy import select
 
 
-class ProductRepository(Database):
-
-    def __init__(self, session_factory: sessionmaker[Session] | None = None) -> None:
-        super().__init__(session_factory)
-        self.create_tables()
+class ProductRepository(Repository):
+    """
+    Read-only access to the product catalog (written by PaddleSync)
+    """
 
     # --- MAPPING
 
@@ -23,35 +20,42 @@ class ProductRepository(Database):
         return ProductLicense(
             id=row.id,
             product_id=row.product_id,
+            paddle_price_id=row.paddle_price_id,
+            is_trial=row.is_trial,
             activation_seats=row.activation_seats,
             life_duration=row.life_duration,
         )
 
     # --- GET
 
-    def get_product_license(self, product_license_id: str) -> Optional[ProductLicense]:
+    def get_product_license(self, paddle_price_id: str) -> Optional[ProductLicense]:
         """
-        Retrieve a license offered on the website from its Paddle product ID
+        Retrieve a license offered on the website from its Paddle price ID
 
         Args:
-            product_license_id (str): Paddle product ID (pro_…)
+            paddle_price_id (str): Paddle price ID (pri_…)
 
         Returns:
             Optional[ProductLicense]: Corresponding product license, None if unknown
         """
         with self.session() as s:
-            row = s.get(ProductLicenseRow, product_license_id)
+            row = s.scalar(select(ProductLicenseRow).where(ProductLicenseRow.paddle_price_id == paddle_price_id))
             return self._to_product_license(row) if row else None
 
-    def get_trial_duration(self, product_id: str) -> Optional[timedelta]:
+    def get_trial(self, bundle_id: str) -> Optional[ProductTrial]:
         """
-        Retrieve the trial duration of a product
+        Retrieve the trial offered by a product
 
         Args:
-            product_id (str): Product ID (FxPlug ID)
+            bundle_id (str): Product FxPlug ID, sent by the installer
 
         Returns:
-            Optional[timedelta]: Trial duration, None if the product is unknown or has no trial
+            Optional[ProductTrial]: Trial offer, None if the product is unknown or has no trial
         """
         with self.session() as s:
-            return s.scalar(select(ProductRow.trial_duration).where(ProductRow.id == product_id))
+            row = s.execute(
+                select(ProductRow.id, ProductRow.trial_duration).where(ProductRow.bundle_id == bundle_id)
+            ).one_or_none()
+            if row is None or row.trial_duration is None:
+                return None
+            return ProductTrial(product_id=row.id, bundle_id=bundle_id, trial_duration=row.trial_duration)

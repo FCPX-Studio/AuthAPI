@@ -14,7 +14,7 @@ class ExpiredLicenseError(Exception):
         super().__init__(f"License '{license_key}' expired on {expiration_date}")
 
 class ActivationNotFoundError(Exception):
-    def __init__(self, activation_id: str) -> None:
+    def __init__(self, activation_id: int) -> None:
         self.activation_id = activation_id
         super().__init__(f"Invalide activation ID '{activation_id}'")
 
@@ -25,9 +25,10 @@ class ActivationLimitReachedError(Exception):
         super().__init__(f"Activations limit reached ({activation_limit}) for license '{license_key}'")
 
 class ProductLicenseNotFoundError(Exception):
-    def __init__(self, product_license_id: str) -> None:
-        self.product_license_id = product_license_id
-        super().__init__(f"Unknown product license '{product_license_id}'")
+    def __init__(self, paddle_price_id: str) -> None:
+        self.paddle_price_id = paddle_price_id
+        super().__init__(f"Unknown product license for Paddle price '{paddle_price_id}'")
+
 class TrialNotAvailableError(Exception):
     def __init__(self, product_id: str) -> None:
         self.product_id = product_id

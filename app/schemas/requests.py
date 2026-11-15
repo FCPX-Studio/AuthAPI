@@ -1,5 +1,5 @@
 from app.schemas.paddle import PaddleCustomer, PaddleTransaction
-from app.schemas.user import User, UserLicense, UserActivation
+from app.schemas.user import UserLicense, UserActivation
 from app.schemas.product import ProductLicense
 
 from pydantic import BaseModel, AwareDatetime, Field
@@ -7,19 +7,17 @@ from typing import Optional, Literal
 from datetime import datetime, timezone
 
 
-class ProductLicenseRequest(BaseModel):
-    product_license_id: str     # Paddle product_id
-    customer: PaddleCustomer
+class PaddleTransactionItem(BaseModel):
+    paddle_price_id: str        # Paddle price ID (pri_…), matches ProductLicense.paddle_price_id
     quantity: int = Field(default=1, ge=1)  # Multiplies the catalog activation seats
 
     def build_license(
-            self, 
-            key: str, 
+            self,
+            key: str,
             order_id: str,
             product_license: ProductLicense,
-            user: User
         ) -> UserLicense:
-        """Build UserLicense instance"""
+        """Build UserLicense instance, user_id is set when its owner is saved"""
         now = datetime.now(timezone.utc)
         expires_at = None
         if product_license.life_duration:
@@ -27,18 +25,18 @@ class ProductLicenseRequest(BaseModel):
 
         return UserLicense(
             key=key,
-            product_id=product_license.product_id,
             product_license_id=product_license.id,
-            order_id=order_id,
-            user_id=user.id,
+            paddle_order_id=order_id,
             activation_seats=product_license.activation_seats * self.quantity,
             created_at=now,
             expires_at=expires_at
         )
-
-class OrderLicensesRequest(BaseModel):
-    order_id: str
-    items: list[ProductLicenseRequest]
+    
+class PaddleTransactionOrder(BaseModel):
+    """Processed paddle order, with customer retrieved"""
+    id: str
+    customer: PaddleCustomer
+    items: list[PaddleTransactionItem]
 
 class PaddleTransactionCompletedEvent(BaseModel):
     """
@@ -51,29 +49,27 @@ class PaddleTransactionCompletedEvent(BaseModel):
     notification_id: Optional[str] = None   # Paddle notification ID (ntf_…)
     data: PaddleTransaction
 
-    def build_order_request(self, customer: PaddleCustomer) -> OrderLicensesRequest:
+    def build_paddle_order(self, customer: PaddleCustomer) -> PaddleTransactionOrder:
         """
-        Build OrderLicensesRequest instance, one license request per item
-        Trial items (`trial` key in price custom_data) are skipped: trials are
-        created by the installer through /license/activate_trial
+        Build the Paddle order: transaction ID, customer and one item per transaction item
+        Trial items are kept, they are filtered later from the catalog (ProductLicense.is_trial)
 
         Args:
             customer (PaddleCustomer): Transaction customer, fetched from Paddle API
 
         Returns:
-            OrderLicensesRequest: Order license creation request
+            PaddleTransactionOrder: Paddle order, with linked customer
         """
-        return OrderLicensesRequest(
-            order_id=self.data.id,
+        return PaddleTransactionOrder(
+            id=self.data.id,
+            customer=customer,
             items=[
-                ProductLicenseRequest(
-                    product_license_id=item.price.product_id,
+                PaddleTransactionItem(
+                    paddle_price_id=item.price.id,
                     quantity=item.quantity,
-                    customer=customer,
                 )
                 for item in self.data.items
-                if not item.price.is_trial
-            ],
+            ]
         )
     
 

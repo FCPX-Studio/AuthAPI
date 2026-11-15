@@ -1,12 +1,13 @@
 from config import settings
 
 from app.schemas.requests import (
-    OrderLicensesRequest,
-    ProductLicenseRequest,
+    PaddleTransactionOrder,
+    PaddleTransactionItem,
     ActivateLicenseRequest,
     ActivateTrialRequest,
 )
-from app.schemas.user import User, UserLicense, LicenseToken
+from app.schemas.user import UserLicense, LicenseToken
+from app.schemas.product import ProductLicense
 from app.schemas.exceptions import (
     InvalideLicenseKeyError,
     ExpiredLicenseError,
@@ -44,11 +45,11 @@ class Licensing:
     
     def _bad_license(self, license: Optional[UserLicense], product_id: str) -> bool:
         """
-        Validate a license, reject None and make sure product_id match
+        Validate a license, reject None and make sure the licensed product match
 
         Args:
             license (License): License to validate
-            product_id: Product ID to check
+            product_id: Product FxPlug ID sent by the installer (Product.bundle_id)
 
         Returns:
             bool: True if bad license, else False
@@ -56,7 +57,7 @@ class Licensing:
         if not license:
             return True
         
-        return license.product_id != product_id
+        return license.bundle_id != product_id
     
     def _license_expired(self, license: UserLicense) -> bool:
         """
@@ -73,31 +74,42 @@ class Licensing:
         
         return self._now() >= license.expires_at
 
+    def _get_product_license(self, paddle_item: PaddleTransactionItem) -> ProductLicense:
+        """
+        Retrieve the catalog license of an item from its Paddle price
+
+        Args:
+            paddle_item (PaddleTransactionItem): Order item (Paddle price and quantity)
+
+        Returns:
+            ProductLicense: Catalog license (seats, lifetime, trial flag)
+
+        Raises:
+            ProductLicenseNotFoundError: Unknown Paddle price ID
+        """
+        product_license = self.product_repository.get_product_license(paddle_item.paddle_price_id)
+        if product_license is None:
+            raise ProductLicenseNotFoundError(paddle_item.paddle_price_id)
+        return product_license
+
     def _create_item_license(
             self,
-            order_id: str,
-            item_request: ProductLicenseRequest,
-            user: User
+            paddle_order_id: str,
+            paddle_item: PaddleTransactionItem,
+            product_license: ProductLicense,
         ) -> UserLicense:
         """
         Build the license for a specific item (not saved in DB)
         Seats and lifetime come from the ProductLicense catalog
 
         Args:
-            order_id (str): ID of the order
-            item_request (ProductLicenseRequest): License request for a specific item
-            user (User): Owner of the license
+            paddle_order_id (str): Paddle transaction ID (txn_…)
+            paddle_item (PaddleTransactionItem): Order item (Paddle price and quantity)
+            product_license (ProductLicense): Catalog license of the item
 
         Returns:
             UserLicense: Created license
-
-        Raises:
-            ProductLicenseNotFoundError: Unknown Paddle product ID
         """
-        product_license = self.product_repository.get_product_license(item_request.product_license_id)
-        if product_license is None:
-            raise ProductLicenseNotFoundError(item_request.product_license_id)
-
         # Create a unique license key
         while True:
             key = self.keytool.generate_cuuid()
@@ -105,47 +117,53 @@ class Licensing:
                 break
         
         # Build license
-        license = item_request.build_license(
-            key, order_id, product_license, user
+        license = paddle_item.build_license(
+            key, paddle_order_id, product_license
         )
 
         return license
     
     def create_licenses(
             self,
-            order_request: OrderLicensesRequest
+            paddle_order: PaddleTransactionOrder
         ) -> list[str]:  
         """
         Create licenses for each items of an order
+        Trial items (ProductLicense.is_trial) are skipped: trials are created by the
+        installer through /license/activate_trial
 
         Args:
-            order_request (OrderLicenseRequest): Order license creation request
+            paddle_order (PaddleTransactionOrder): Paddle order for which to create licenses
 
         Returns:
-            list[str]: License keys, normalized UUID (XXXX-XXXX-XXXX-XXXX)
+            list[str]: License keys, normalized UUID (XXXX-XXXX-XXXX-XXXX), in the same
+                order as the non-trial items (empty if the order only has trials)
 
         Raises:
-            ProductLicenseNotFoundError: An item references an unknown Paddle product ID,
+            ProductLicenseNotFoundError: An item references an unknown Paddle price ID,
                 nothing is saved
         """
         # Prevent duplicate licenses for a single order
-        order_licenses = self.repository.get_order_licenses(order_request.order_id)
+        order_licenses = self.repository.get_order_licenses(paddle_order.id)
         if order_licenses:
             return [lcs.key for lcs in order_licenses]
 
-        users: dict[str, User] = {}
-        licenses: list[UserLicense] = []
-        for item in order_request.items:
-            user = item.customer.build_user()
-            users[user.id] = user
-            licenses.append(
-                self._create_item_license(order_request.order_id, item, user)
-            )
+        # Resolve every item first: an unknown price aborts the whole order
+        catalog = [
+            (paddle_item, self._get_product_license(paddle_item)) 
+            for paddle_item in paddle_order.items
+        ]
 
-        # Save users and licenses (single transaction) and return db keys
-        unique_users = list(users.values())
-        valid_keys = self.repository.save_licenses(unique_users, licenses)
-        return valid_keys
+        licenses = [
+            self._create_item_license(paddle_order.id, paddle_item, product_license)
+            for paddle_item, product_license in catalog
+            if not product_license.is_trial
+        ]
+        if not licenses:
+            return []
+
+        # Save the customer and its licenses (single transaction) and return db keys
+        return self.repository.save_licenses(paddle_order.customer.build_user(), licenses)
     
     def activate_license(
             self,
@@ -194,17 +212,18 @@ class Licensing:
         else:
             raise ActivationLimitReachedError(license.key, license.activation_seats)
 
+        # IDs stay strings in the token and response: contract with the shipped plugins
         signed_activation = self.keytool.create_signed_license_activation(
             format_version=settings.LICENSE_TOKEN_FORMAT_VERSION,
-            license_id=license.id,
-            product_id=license.product_id,
+            license_id=str(license.id),
+            product_id=activation_request.product_id,
             fingerprint=activation.machine_fingerprint,
             issued_at=now,
             expire_at=license.expires_at
         )
 
         return LicenseToken(
-            activation_id=activation_id,
+            activation_id=str(activation_id),
             activation_seats=license.activation_seats,
             activations_used=len(fingerprint_activations),
             license=signed_activation
@@ -231,25 +250,26 @@ class Licensing:
             TrialNotAvailableError: Unknown product or no trial for this product
             TrialExpiredError: This machine already used its trial for this product
         """
-        product_id = activation_request.product_id
+        bundle_id = activation_request.product_id
         now = self._now()
 
-        trial_duration = self.product_repository.get_trial_duration(product_id)
-        if trial_duration is None:
-            raise TrialNotAvailableError(product_id)
+        product_trial = self.product_repository.get_trial(bundle_id)
+        if product_trial is None:
+            raise TrialNotAvailableError(bundle_id)
 
         trial = self.repository.upsert_trial(
-            product_id=product_id,
+            product_id=product_trial.product_id,
             activation=activation_request.build_activation(),
-            expires_at=now + trial_duration,
+            expires_at=now + product_trial.trial_duration,
         )
         if now >= trial.expires_at:
-            raise TrialExpiredError(product_id, trial.expires_at)
+            raise TrialExpiredError(bundle_id, trial.expires_at)
 
+        # IDs stay strings in the token and response: contract with the shipped plugins
         signed_activation = self.keytool.create_signed_license_activation(
             format_version=settings.LICENSE_TOKEN_FORMAT_VERSION,
-            license_id=trial.id,
-            product_id=trial.product_id,
+            license_id=str(trial.id),
+            product_id=bundle_id,
             fingerprint=trial.machine_fingerprint,
             issued_at=now,
             expire_at=trial.expires_at
@@ -257,7 +277,7 @@ class Licensing:
 
         # A trial is bound to a single machine
         return LicenseToken(
-            activation_id=trial.id,
+            activation_id=str(trial.id),
             activation_seats=1,
             activations_used=1,
             license=signed_activation
