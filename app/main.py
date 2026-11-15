@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     del app.state.paddle
 
 
-api_prefix = f"/{settings.API_VERSION}"
+api_prefix = f"/{settings.API_VERSION}/{settings.API_NAME}"
 
 app = FastAPI(
     title=settings.APP_NAME,

@@ -23,5 +23,5 @@
 			profile shortlived
 		}
 	}
-	reverse_proxy authenticator:8000
+	reverse_proxy auth-api:8000
 }

@@ -11,7 +11,7 @@ from pydantic import SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class AuthenticatorSettings(BaseSettings):
+class AuthAPISettings(BaseSettings):
     # Load .env
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -20,11 +20,12 @@ class AuthenticatorSettings(BaseSettings):
     )
 
     # FastAPI application
-    APP_NAME: str = "Authenticator API"
+    APP_NAME: str = "AuthAPI"
     APP_DESCRIPTION: str = "Manage authentication and product licensing"
     APP_VERSION: str = "1.0"
-    # Public URL version: every route and the API docs are served under /<API_VERSION>
-    API_VERSION: str = "v1"
+    # API url infos: api.fcpxstudio.shop/<API_NAME>/<API_VERSION>/
+    API_NAME: str = "auth"
+    API_VERSION: str = "v1" 
 
     # Database
     DB_HOST: SecretStr
@@ -57,4 +58,4 @@ class AuthenticatorSettings(BaseSettings):
 
 
 
-settings = AuthenticatorSettings() # type: ignore
+settings = AuthAPISettings() # type: ignore

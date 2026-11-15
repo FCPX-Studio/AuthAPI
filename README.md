@@ -1,8 +1,8 @@
-# Authenticator
+# AuthAPI
 
 License authentication API for **FCPX Studio** products.
 
-Authenticator issues license keys when a product is bought, and activates them on customer machines. Each activation returns an **Ed25519-signed token** that the product (FxPlug plugin / installer) verifies offline with the matching public key.
+AuthAPI issues license keys when a product is bought, and activates them on customer machines. Each activation returns an **Ed25519-signed token** that the product (FxPlug plugin / installer) verifies offline with the matching public key.
 
 Built with FastAPI, SQLAlchemy and PostgreSQL.
 
@@ -11,7 +11,7 @@ Built with FastAPI, SQLAlchemy and PostgreSQL.
 ## How it works
 
 ```
- fcpxstudio website                Authenticator                  Customer Mac (plugin)
+ fcpxstudio website                AuthAPI                  Customer Mac (plugin)
  ──────────────────                ─────────────                  ─────────────────────
  purchase completed ─POST /v1/license/create─▶ generate key
                      ◀──────── "ABCD-EFGH-JKMN-PQRS"
@@ -54,7 +54,7 @@ cp .env.example .env
 | Variable                       | Required | Default | Description                                                         |
 | ------------------------------ | -------- | ------- | ------------------------------------------------------------------- |
 | `license_private_key`          | yes      | —       | Base64 of the raw 32-byte Ed25519 private key used to sign tokens   |
-| `POSTGRES_URL`                 | yes      | —       | SQLAlchemy URL, e.g. `postgresql://user:pass@localhost:5432/authenticator` |
+| `POSTGRES_URL`                 | yes      | —       | SQLAlchemy URL, e.g. `postgresql://user:pass@localhost:5432/auth_api` |
 | `POSTGRES_POOL_SIZE`           | no       | `5`     | Connection pool size                                                |
 | `LICENSE_TOKEN_FORMAT_VERSION` | no       | `1`     | `formatVersion` written into signed tokens                          |
 

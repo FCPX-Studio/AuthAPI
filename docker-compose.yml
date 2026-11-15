@@ -1,6 +1,7 @@
 services:
-  authenticator:
-    container_name: authenticator
+  auth-api:
+    container_name: auth-api
+    image: auth-api
     build: .
     env_file:
       - .env
@@ -33,7 +34,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - authenticator
+      - auth-api
     restart: unless-stopped
     networks:
       - web
