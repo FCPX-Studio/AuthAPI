@@ -77,11 +77,15 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
-      # Also re-runs db-migrate first (a no-op when the schema is up to date)
+      # Also re-runs db-migrate first (a no-op when the schema is up to date).
+      # flock: waits for any other deploy on the VPS (deploy repo, other services)
+      # to finish, so two `docker compose up` never recreate a container at once.
       - name: Pull and restart ${{ env.SERVICE }}
         run: |
           ssh "$VPS_USER@$VPS_HOST" "
             set -e
+            exec 9> ~/.deploy.lock
+            flock -w 600 9
             cd deploy
             docker compose pull $SERVICE
             docker compose up -d $SERVICE
