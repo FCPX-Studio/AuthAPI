@@ -5,6 +5,7 @@ from app.schemas.user import LicenseToken
 from app.schemas.exceptions import (
     InvalideLicenseKeyError,
     ExpiredLicenseError,
+    RevokedLicenseError,
     ActivationLimitReachedError,
     TrialNotAvailableError,
     TrialExpiredError,
@@ -33,7 +34,7 @@ async def activate(body: ActivateLicenseRequest, request: Request) -> LicenseTok
 
     Raises:
         HTTPException: 404 unknown key or wrong product
-        HTTPException: 403 expired
+        HTTPException: 403 revoked (refund, chargeback, manual) or expired
         HTTPException: 409 no seat left
     """
     licensing: Licensing = request.app.state.licensing
@@ -44,6 +45,11 @@ async def activate(body: ActivateLicenseRequest, request: Request) -> LicenseTok
         raise HTTPException(
             status_code=404, 
             detail=f"Invalid license key '{e.license_key}'"
+        )
+    except RevokedLicenseError as e:
+        raise HTTPException(
+            status_code=403,
+            detail=f"License revoked on {e.revoked_at} ({e.reason})"
         )
     except ExpiredLicenseError as e:
         raise HTTPException(

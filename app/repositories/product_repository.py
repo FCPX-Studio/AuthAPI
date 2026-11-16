@@ -17,17 +17,19 @@ class ProductRepository(Database):
 
     def get_trial(self, bundle_id: str) -> Optional[ProductTrial]:
         """
-        Retrieve the trial offered by a product
+        Retrieve the trial offered by a product. An archived product (Paddle "delete") offers no trial
 
         Args:
             bundle_id (str): Product FxPlug ID, sent by the installer
 
         Returns:
-            Optional[ProductTrial]: Trial offer, None if the product is unknown or has no trial
+            Optional[ProductTrial]: Trial offer, None if the product is unknown, archived or has no trial
         """
         with self.session() as s:
             row = s.execute(
-                select(ProductRow.id, ProductRow.trial_duration).where(ProductRow.bundle_id == bundle_id)
+                select(ProductRow.id, ProductRow.trial_duration).where(
+                    ProductRow.bundle_id == bundle_id, ProductRow.archived.is_(False)
+                )
             ).one_or_none()
             if row is None or row.trial_duration is None:
                 return None

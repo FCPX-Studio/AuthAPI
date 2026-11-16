@@ -5,6 +5,7 @@ from app.schemas.user import OrderLicenses, UserLicense, LicenseToken
 from app.schemas.exceptions import (
     InvalideLicenseKeyError,
     ExpiredLicenseError,
+    RevokedLicenseError,
     ActivationLimitReachedError,
     TrialNotAvailableError,
     TrialExpiredError,
@@ -84,6 +85,20 @@ class Licensing:
         """
         return self.repository.issue_order_licenses(order_id, self.keytool.generate_cuuid, self._now())
 
+    def revoke_licenses(self, paddle_item_ids: list[str], reason: str) -> list[int]:
+        """
+        Revoke the licenses of line items refunded / charged back in Paddle (OrderRefunded event).
+        Idempotent, a replay revokes nothing more
+
+        Args:
+            paddle_item_ids (list[str]): Paddle line item IDs (txnitm_…)
+            reason (str): "refund" or "chargeback"
+
+        Returns:
+            list[int]: IDs of the licenses revoked by this call
+        """
+        return self.repository.revoke_item_licenses(paddle_item_ids, reason, self._now())
+
     def activate_license(
             self,
             activation_request: ActivateLicenseRequest
@@ -92,6 +107,7 @@ class Licensing:
         Validate informations then create a signed token.
         Check for validation
             - Product match
+            - License not revoked
             - License expiration
             - Activations count
 
@@ -112,6 +128,8 @@ class Licensing:
         if self._bad_license(license, activation_request.product_id):
             raise InvalideLicenseKeyError(license_key)
         assert license and license.id # retrieved license should have a ID
+        if license.revoked_at is not None:
+            raise RevokedLicenseError(license.key, license.revoked_at, license.revoked_reason or "manual")
         if self._license_expired(license):
             raise ExpiredLicenseError(license.key, license.expires_at)
 

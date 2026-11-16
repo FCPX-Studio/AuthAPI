@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session, joinedload
 from db import Database
 from db.models import (
     OrderItemRow,
@@ -42,6 +42,8 @@ class LicenseRepository(Database):
             activation_seats=row.activation_seats,
             created_at=row.created_at,
             expires_at=row.expires_at,  # type: ignore[arg-type]
+            revoked_at=row.revoked_at,  # type: ignore[arg-type]
+            revoked_reason=row.revoked_reason,
             bundle_id=bundle_id,
         )
 
@@ -186,11 +188,18 @@ class LicenseRepository(Database):
         """
         Create the licenses of an order, in a single transaction (all or nothing).
         One UserLicense per unit of each item (item_index 1..quantity), owned by the order's user.
-        Trial items (ProductLicense.is_trial) are skipped: trials are created by the
-        installer through /license/activate_trial
+        Skipped items:
+        - trial items (ProductLicense.is_trial): trials are created by the installer
+          through /license/activate_trial
+        - refunded items (OrderItem.refunded_at): the refund arrived before the licenses were issued
+
+        The order's items are locked (FOR SHARE) until the commit: PaddleSync's refund UPDATE of an
+        item waits for it, so its OrderRefunded is only handled once these licenses exist (and revokes
+        them), or this sees the item already refunded and skips it.
 
         Idempotent: UNIQUE (paddle_item_id, item_index) makes a replay insert nothing,
-        and the licenses already created are returned instead
+        and the licenses already created are returned instead (active ones only: a replay never
+        announces or emails a revoked license)
 
         Args:
             order_id (int): Order.id, from the OrderReady event
@@ -198,8 +207,8 @@ class LicenseRepository(Database):
             now (datetime): Creation date, expires_at = now + ProductLicense.life_duration
 
         Returns:
-            OrderLicenses: Order IDs and every license ID of the order,
-                ordered by (paddle_item_id, item_index), empty if the order only has trials
+            OrderLicenses: Order IDs and every active license ID of the order,
+                ordered by (paddle_item_id, item_index), empty if the order only has trials or refunds
 
         Raises:
             OrderNotFoundError: Unknown order ID
@@ -207,19 +216,22 @@ class LicenseRepository(Database):
                 the whole transaction is rolled back
         """
         with self.session() as s:
-            order = s.scalar(
-                select(OrderRow)
-                .where(OrderRow.id == order_id)
-                .options(selectinload(OrderRow.items).joinedload(OrderItemRow.product_license))
-            )
+            order = s.scalar(select(OrderRow).where(OrderRow.id == order_id))
             if order is None:
                 raise OrderNotFoundError(order_id)
 
+            items = s.scalars(
+                select(OrderItemRow)
+                .where(OrderItemRow.order_id == order_id)
+                .options(joinedload(OrderItemRow.product_license))
+                .with_for_update(read=True, of=OrderItemRow)
+            ).all()
+
             item_ids: list[str] = []
             licenses: list[dict] = []
-            for item in order.items:
+            for item in items:
                 product_license = item.product_license
-                if product_license.is_trial:
+                if product_license.is_trial or item.refunded_at is not None:
                     continue
 
                 item_ids.append(item.paddle_item_id)
@@ -246,7 +258,7 @@ class LicenseRepository(Database):
                 )
                 license_ids = list(s.scalars(
                     select(UserLicenseRow.id)
-                    .where(UserLicenseRow.paddle_item_id.in_(item_ids))
+                    .where(UserLicenseRow.paddle_item_id.in_(item_ids), UserLicenseRow.revoked_at.is_(None))
                     .order_by(UserLicenseRow.paddle_item_id, UserLicenseRow.item_index)
                 ))
 
@@ -255,6 +267,28 @@ class LicenseRepository(Database):
                 paddle_order_id=order.paddle_order_id,
                 user_license_ids=license_ids,
             )
+
+    def revoke_item_licenses(self, paddle_item_ids: list[str], reason: str, now: datetime) -> list[int]:
+        """
+        Revoke every license of the given line items (refunded / charged back in Paddle).
+        Idempotent: licenses already revoked keep their first revocation date and reason.
+
+        Args:
+            paddle_item_ids (list[str]): Paddle line item IDs (txnitm_…, UserLicense.paddle_item_id)
+            reason (str): "refund" or "chargeback" (UserLicense.revoked_reason)
+            now (datetime): Revocation date
+
+        Returns:
+            list[int]: IDs of the licenses revoked by this call (empty on a replay,
+                or if the licenses were never issued)
+        """
+        with self.session() as s:
+            return list(s.scalars(
+                update(UserLicenseRow)
+                .where(UserLicenseRow.paddle_item_id.in_(paddle_item_ids), UserLicenseRow.revoked_at.is_(None))
+                .values(revoked_at=now, revoked_reason=reason)
+                .returning(UserLicenseRow.id)
+            ))
 
     def save_activation(self, license_key: str, activation: UserActivation) -> int:
         """

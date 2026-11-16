@@ -3,11 +3,11 @@ from fastapi import APIRouter, FastAPI
 
 from db import close_db
 from events import EventConsumer, close_redis
-from events.streams import ORDERS_READY
+from events.streams import ORDERS_READY, ORDERS_REFUNDED
 
 from config import settings
 
-from app.events import OrderReadyHandler
+from app.events import OrderReadyHandler, OrderRefundedHandler
 from app.routers import license
 from app.services import Licensing
 
@@ -19,17 +19,24 @@ async def lifespan(app: FastAPI):
     # --- startup logic ---
     app.state.licensing = Licensing()
 
-    # orders:ready consumer (PaddleSync -> AuthAPI), runs alongside the HTTP endpoints
-    consumer = EventConsumer(ORDERS_READY, group="authapi")
-    consumer_task = asyncio.create_task(consumer.run(OrderReadyHandler(app.state.licensing)))
+    # orders:ready and orders:refunded consumers (PaddleSync -> AuthAPI), run alongside the HTTP endpoints.
+    # A new group reads its stream from the start: refunds published before this release are applied too
+    consumer_tasks = [
+        asyncio.create_task(EventConsumer(ORDERS_READY, group="authapi").run(OrderReadyHandler(app.state.licensing))),
+        asyncio.create_task(
+            EventConsumer(ORDERS_REFUNDED, group="authapi").run(OrderRefundedHandler(app.state.licensing))
+        ),
+    ]
 
     yield
 
     # --- shutdown logic ---
     # A message interrupted by the cancel stays pending in Redis and is retried
-    consumer_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await consumer_task
+    for task in consumer_tasks:
+        task.cancel()
+    for task in consumer_tasks:
+        with suppress(asyncio.CancelledError):
+            await task
     await close_redis()
     del app.state.licensing
     close_db()

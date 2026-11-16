@@ -13,6 +13,13 @@ class ExpiredLicenseError(Exception):
         self.expiration_date = expiration_date
         super().__init__(f"License '{license_key}' expired on {expiration_date}")
 
+class RevokedLicenseError(Exception):
+    def __init__(self, license_key: str, revoked_at: datetime, reason: str) -> None:
+        self.license_key = license_key
+        self.revoked_at = revoked_at
+        self.reason = reason
+        super().__init__(f"License '{license_key}' revoked on {revoked_at} ({reason})")
+
 class ActivationNotFoundError(Exception):
     def __init__(self, activation_id: int) -> None:
         self.activation_id = activation_id

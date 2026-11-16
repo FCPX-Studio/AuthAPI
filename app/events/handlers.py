@@ -1,10 +1,12 @@
 """
-Redis stream handlers: orders:ready -> UserLicense -> licenses:issued + emails:license
+Redis stream handlers:
+- orders:ready -> UserLicense -> licenses:issued + emails:license
+- orders:refunded -> revoke UserLicense
 
 Handlers must be idempotent: EventConsumer delivers at least once and acks only when the handler
-returns. Any exception leaves the message pending: it is retried, then moved to `orders:ready:dead`.
+returns. Any exception leaves the message pending: it is retried, then moved to `<stream>:dead`.
 """
-from events import EventPublisher, LicenseIssued, OrderReady, SendLicenseEmail
+from events import EventPublisher, LicenseIssued, OrderReady, OrderRefunded, SendLicenseEmail
 from events.streams import LICENSE_EMAILS, LICENSES_ISSUED
 
 from app.services import Licensing
@@ -52,4 +54,32 @@ class OrderReadyHandler:
             len(order.user_license_ids),
             order.order_id,
             order.paddle_order_id,
+        )
+
+
+class OrderRefundedHandler:
+    """
+    Revoke the licenses of line items refunded or charged back in Paddle (committed by PaddleSync)
+    """
+
+    def __init__(self, licensing: Licensing) -> None:
+        self.licensing = licensing
+
+    async def __call__(self, event: OrderRefunded) -> None:
+        """
+        Licenses not issued yet need nothing: issuing skips refunded items (OrderItem.refunded_at)
+
+        Args:
+            event (OrderRefunded): Refunded line items of an order
+        """
+        # Sync SQLAlchemy: run off the event loop, which also serves the HTTP endpoints
+        revoked = await asyncio.to_thread(self.licensing.revoke_licenses, event.paddle_item_ids, event.reason)
+
+        logger.info(
+            "Revoked %d license(s) of order %s (%s), %s of %d item(s)",
+            len(revoked),
+            event.order_id,
+            event.paddle_order_id,
+            event.reason,
+            len(event.paddle_item_ids),
         )

@@ -13,6 +13,8 @@ class UserLicense(BaseModel):
     activation_seats: int
     created_at: AwareDatetime
     expires_at: Optional[AwareDatetime] = None
+    revoked_at: Optional[AwareDatetime] = None      # None = active
+    revoked_reason: Optional[str] = None            # refund | chargeback | manual
     bundle_id: Optional[str] = None                 # Licensed product (FxPlug ID), filled on read
 
 class OrderLicenses(BaseModel):

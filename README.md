@@ -12,9 +12,10 @@ Built with FastAPI, SQLAlchemy, PostgreSQL and Redis Streams. The schema comes f
 
 ```
 Paddle ─ webhook ─▶ EventsAPI ─ paddle:events ─▶ PaddleSync   (User, Order, OrderItem → Postgres)
-                                                    └─ orders:ready ─▶ AuthAPI   (UserLicense → Postgres)
-                                                                         ├─ licenses:issued ─▶ EventsAPI (SSE to the website)
-                                                                         └─ emails:license  ─▶ EmailTalker
+                                                    ├─ orders:ready ─▶ AuthAPI   (UserLicense → Postgres)
+                                                    │                    ├─ licenses:issued ─▶ EventsAPI (SSE to the website)
+                                                    │                    └─ emails:license  ─▶ EmailTalker
+                                                    └─ orders:refunded ─▶ AuthAPI   (revoke UserLicense)
 
 Customer Mac (plugin) ─ POST /auth/v1/license/activate ─▶ AuthAPI: check product, expiry, seats → signed token
 ```
@@ -26,13 +27,26 @@ AuthAPI never talks to Paddle and never creates customers. PaddleSync validates 
 AuthAPI consumes `orders:ready` (consumer group `authapi`, a background task in the FastAPI lifespan, see [app/events/handlers.py](app/events/handlers.py)):
 
 1. Load the `Order`, its items and their `ProductLicense` from Postgres.
-2. For each item that is not a trial (`ProductLicense.is_trial`), create `quantity` `UserLicense` rows (`item_index` 1..N), owned by `Order.user_id`, with the catalog `activation_seats` and `expires_at = now + life_duration`.
+2. For each item that is not a trial (`ProductLicense.is_trial`) and not refunded (`OrderItem.refunded_at`), create `quantity` `UserLicense` rows (`item_index` 1..N), owned by `Order.user_id`, with the catalog `activation_seats` and `expires_at = now + life_duration`.
 3. Publish `LicenseIssued(order_id, paddle_order_id, user_license_ids)` on `licenses:issued` (even for a trial-only order, with an empty list), and `SendLicenseEmail` on `emails:license` when there is at least one license.
 4. Return: the message is acked.
 
 **Idempotent**: `UNIQUE (paddle_item_id, item_index)` makes a replay insert nothing. The existing licenses are read back and the events are published again with the same ids, so consumers deduplicate on `user_license_ids`. Any error (unknown order, DB down…) leaves the message pending: it is retried, then moved to `orders:ready:dead` after 5 deliveries.
 
 License keys never go through Redis: consumers read them from Postgres.
+
+### License revocation (`orders:refunded`)
+
+When Paddle approves a full refund or a chargeback of a line item, PaddleSync sets `OrderItem.refunded_at` / `refund_reason` and publishes `OrderRefunded(order_id, paddle_item_ids, reason)`. AuthAPI consumes `orders:refunded` (consumer group `authapi`) and sets `UserLicense.revoked_at` / `revoked_reason` on every license of those items. Partial refunds, credits and refund reversals revoke nothing.
+
+- **Idempotent**: licenses already revoked keep their first date and reason.
+- **Refund before issuing**: issuing skips refunded items, so no key is created or emailed. Issuing locks the order's items (`FOR SHARE`) until it commits, so a refund committed meanwhile waits for it and then revokes the new licenses.
+- **Manual revocation**: `UPDATE "UserLicense" SET revoked_at = now(), revoked_reason = 'manual' WHERE license_key = '…'`.
+- A revoked license can't be activated (`403`), even on a machine already registered. **Tokens already issued stay valid offline** until the product checks back with `/license/activate`: there is no token revocation yet.
+
+### Archived products
+
+Paddle never deletes a product, it archives it (`Product.archived`, synced by PaddleSync). An archived product offers no new trial (`404` on `/license/activate_trial`). Licenses already sold for it stay valid.
 
 ### Keys, seats, expiry
 
@@ -149,7 +163,7 @@ Validates a license key for a product and registers the calling machine.
 | Status | Reason                                                 |
 | ------ | ------------------------------------------------------ |
 | `404`  | Unknown key, or the key belongs to a different product |
-| `403`  | License has expired                                    |
+| `403`  | License has been revoked (refund, chargeback, manual) or has expired |
 | `409`  | No activation seat left for this license               |
 
 ### `POST /auth/v1/license/activate_trial`
@@ -158,7 +172,7 @@ Same body without `license_key`. Creates (or refreshes) the trial of the product
 
 | Status | Reason                                       |
 | ------ | -------------------------------------------- |
-| `404`  | Unknown product, or the product has no trial |
+| `404`  | Unknown or archived product, or the product has no trial |
 | `403`  | Trial expired on this machine                |
 
 ---
@@ -195,8 +209,8 @@ The license key itself is never written into the token.
 
 ```
 app/
-├── main.py                      FastAPI app, lifespan (Licensing service + orders:ready consumer task)
-├── events/handlers.py           orders:ready handler: issue licenses, publish licenses:issued / emails:license
+├── main.py                      FastAPI app, lifespan (Licensing service + orders:ready and orders:refunded consumer tasks)
+├── events/handlers.py           orders:ready (issue licenses, publish licenses:issued / emails:license), orders:refunded (revoke)
 ├── routers/license.py           /license/activate, /license/activate_trial
 ├── services/licensing.py        Business rules: license issuing, validation, activation, trials
 ├── repositories/                LicenseRepository, ProductRepository (data access, on db.Database)
