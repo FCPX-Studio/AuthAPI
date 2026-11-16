@@ -46,14 +46,14 @@ When Paddle approves a full refund or a chargeback of a line item, PaddleSync se
 
 ### Archived products
 
-Paddle never deletes a product, it archives it (`Product.archived`, synced by PaddleSync). An archived product offers no new trial (`404` on `/license/activate_trial`). Licenses already sold for it stay valid.
+Paddle never deletes a product or a price, it archives it (`Product.archived`, `ProductLicense.archived`, synced by PaddleSync). An archived product, or a product whose trial prices are all archived, offers no new trial (`404` on `/license/activate_trial`). This also refuses reactivating a trial already started (its offline token stays valid until it expires). Licenses already sold stay valid.
 
 ### Keys, seats, expiry
 
 - **License keys** are 16 random characters from the Crockford Base32 alphabet, formatted `XXXX-XXXX-XXXX-XXXX`. Keys are normalized (trimmed, upper-cased) on activation.
 - **Expiry**: `expires_at` is `NULL` for a perpetual license (`ProductLicense.life_duration` is `NULL`).
 - **Activation seats**: each license allows `activation_seats` machines (copied from `ProductLicense`). A machine uses one seat, identified by its fingerprint. Reactivating a registered machine refreshes its row and does not use another seat.
-- **Trials** are not licenses: the installer calls `/license/activate_trial`, one trial per product and machine, lasting `Product.trial_duration`.
+- **Trials** are not licenses: the installer calls `/license/activate_trial`, one trial per product and machine. A product offers a trial while it has an active (not archived) trial license (a Paddle price with a trial period): the trial lasts its `life_duration`, the longest one if there are several.
 
 ---
 

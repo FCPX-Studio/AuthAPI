@@ -174,7 +174,7 @@ class Licensing:
         Create or refresh the trial of a product on a machine, then create a signed token.
         One trial per product and machine: reactivating keeps the original expiration date
         Check for validation
-            - Product offers a trial (Product.trial_duration)
+            - Product offers a trial (an active trial ProductLicense, not archived)
             - Trial expiration
 
         Args:
