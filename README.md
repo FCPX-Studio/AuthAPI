@@ -51,9 +51,9 @@ Paddle never deletes a product or a price, it archives it (`Product.archived`, `
 ### Keys, seats, expiry
 
 - **License keys** are 16 random characters from the Crockford Base32 alphabet, formatted `XXXX-XXXX-XXXX-XXXX`. Keys are normalized (trimmed, upper-cased) on activation.
-- **Expiry**: `expires_at` is `NULL` for a perpetual license (`ProductLicense.life_duration` is `NULL`).
+- **Expiry**: `expires_at = created_at + ProductLicense.life_duration`, set from the Paddle price custom_data `{"duration": <days>}`. `NULL` (no duration) is a perpetual license.
 - **Activation seats**: each license allows `activation_seats` machines (copied from `ProductLicense`). A machine uses one seat, identified by its fingerprint. Reactivating a registered machine refreshes its row and does not use another seat.
-- **Trials** are not licenses: the installer calls `/license/activate_trial`, one trial per product and machine. A product offers a trial while it has an active (not archived) trial license (a Paddle price with a trial period): the trial lasts its `life_duration`, the longest one if there are several.
+- **Trials** are not licenses: the installer calls `/license/activate_trial`, one trial per product and machine. A product offers a trial while it has an active (not archived) trial license, i.e. a Paddle price with custom_data `{"trial": true, "duration": <days>}` (usually a $0 price): the trial lasts its `life_duration`, the longest one if there are several. No license is issued if a customer checks out a trial price.
 
 ---
 
