@@ -22,7 +22,7 @@ typing_extensions==4.16.0
 uvicorn==0.54.0
 
 # Shared Postgres schema (models + migrations), pinned by tag
-db @ git+https://github.com/FCPX-Studio/db.git@v0.2.0
+db @ git+https://github.com/FCPX-Studio/db.git@v0.3.0
 
 # Shared Redis streams events, pinned by tag
 events @ git+https://github.com/FCPX-Studio/events.git@v0.1.1
