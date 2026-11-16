@@ -1,7 +1,7 @@
 from db import Database
-from db.models import ProductLicenseRow, ProductRow
+from db.models import ProductRow
 
-from app.schemas.product import ProductLicense, ProductTrial
+from app.schemas.product import ProductTrial
 
 from typing import Optional
 
@@ -13,34 +13,7 @@ class ProductRepository(Database):
     Read-only access to the product catalog (written by PaddleSync)
     """
 
-    # --- MAPPING
-
-    @staticmethod
-    def _to_product_license(row: ProductLicenseRow) -> ProductLicense:
-        return ProductLicense(
-            id=row.id,
-            product_id=row.product_id,
-            paddle_price_id=row.paddle_price_id,
-            is_trial=row.is_trial,
-            activation_seats=row.activation_seats,
-            life_duration=row.life_duration,
-        )
-
     # --- GET
-
-    def get_product_license(self, paddle_price_id: str) -> Optional[ProductLicense]:
-        """
-        Retrieve a license offered on the website from its Paddle price ID
-
-        Args:
-            paddle_price_id (str): Paddle price ID (pri_…)
-
-        Returns:
-            Optional[ProductLicense]: Corresponding product license, None if unknown
-        """
-        with self.session() as s:
-            row = s.scalar(select(ProductLicenseRow).where(ProductLicenseRow.paddle_price_id == paddle_price_id))
-            return self._to_product_license(row) if row else None
 
     def get_trial(self, bundle_id: str) -> Optional[ProductTrial]:
         """

@@ -24,10 +24,14 @@ class ActivationLimitReachedError(Exception):
         self.activation_limit = activation_limit
         super().__init__(f"Activations limit reached ({activation_limit}) for license '{license_key}'")
 
-class ProductLicenseNotFoundError(Exception):
-    def __init__(self, paddle_price_id: str) -> None:
-        self.paddle_price_id = paddle_price_id
-        super().__init__(f"Unknown product license for Paddle price '{paddle_price_id}'")
+class OrderNotFoundError(Exception):
+    """
+    The order of an OrderReady event is not in the DB. PaddleSync publishes after its commit,
+    so this is not expected: the event is retried, then dead-lettered
+    """
+    def __init__(self, order_id: int) -> None:
+        self.order_id = order_id
+        super().__init__(f"Order {order_id} not found")
 
 class TrialNotAvailableError(Exception):
     def __init__(self, product_id: str) -> None:

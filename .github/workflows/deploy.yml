@@ -54,7 +54,7 @@ jobs:
           # Layer cache between runs: only changed layers are rebuilt
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          # Read-only token for the private FCPX-Studio/db repo (requirements.txt),
+          # Read-only token for the private FCPX-Studio/db and FCPX-Studio/events repos (requirements.txt),
           # mounted only during pip install (see the Dockerfile)
           secrets: |
             git_credentials=https://x-access-token:${{ secrets.DB_REPO_TOKEN }}@github.com

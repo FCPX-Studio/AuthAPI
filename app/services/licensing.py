@@ -1,18 +1,11 @@
 from config import settings
 
-from app.schemas.requests import (
-    PaddleTransactionOrder,
-    PaddleTransactionItem,
-    ActivateLicenseRequest,
-    ActivateTrialRequest,
-)
-from app.schemas.user import UserLicense, LicenseToken
-from app.schemas.product import ProductLicense
+from app.schemas.requests import ActivateLicenseRequest, ActivateTrialRequest
+from app.schemas.user import OrderLicenses, UserLicense, LicenseToken
 from app.schemas.exceptions import (
     InvalideLicenseKeyError,
     ExpiredLicenseError,
     ActivationLimitReachedError,
-    ProductLicenseNotFoundError,
     TrialNotAvailableError,
     TrialExpiredError,
 )
@@ -74,97 +67,23 @@ class Licensing:
         
         return self._now() >= license.expires_at
 
-    def _get_product_license(self, paddle_item: PaddleTransactionItem) -> ProductLicense:
+    def create_licenses(self, order_id: int) -> OrderLicenses:
         """
-        Retrieve the catalog license of an item from its Paddle price
+        Create the licenses of an order synced by PaddleSync (Order, OrderItem and User are
+        already in DB): one license per unit of each non-trial item, owned by the order's user.
+        Idempotent, a replay returns the licenses already created
 
         Args:
-            paddle_item (PaddleTransactionItem): Order item (Paddle price and quantity)
+            order_id (int): Order.id, from the OrderReady event
 
         Returns:
-            ProductLicense: Catalog license (seats, lifetime, trial flag)
+            OrderLicenses: Order IDs and every license ID of the order (empty if only trials)
 
         Raises:
-            ProductLicenseNotFoundError: Unknown Paddle price ID
+            OrderNotFoundError: Unknown order ID
         """
-        product_license = self.product_repository.get_product_license(paddle_item.paddle_price_id)
-        if product_license is None:
-            raise ProductLicenseNotFoundError(paddle_item.paddle_price_id)
-        return product_license
+        return self.repository.issue_order_licenses(order_id, self.keytool.generate_cuuid, self._now())
 
-    def _create_item_license(
-            self,
-            paddle_order_id: str,
-            paddle_item: PaddleTransactionItem,
-            product_license: ProductLicense,
-        ) -> UserLicense:
-        """
-        Build the license for a specific item (not saved in DB)
-        Seats and lifetime come from the ProductLicense catalog
-
-        Args:
-            paddle_order_id (str): Paddle transaction ID (txn_…)
-            paddle_item (PaddleTransactionItem): Order item (Paddle price and quantity)
-            product_license (ProductLicense): Catalog license of the item
-
-        Returns:
-            UserLicense: Created license
-        """
-        # Create a unique license key
-        while True:
-            key = self.keytool.generate_cuuid()
-            if not self.repository.license_key_exists(key):
-                break
-        
-        # Build license
-        license = paddle_item.build_license(
-            key, paddle_order_id, product_license
-        )
-
-        return license
-    
-    def create_licenses(
-            self,
-            paddle_order: PaddleTransactionOrder
-        ) -> list[str]:  
-        """
-        Create licenses for each items of an order
-        Trial items (ProductLicense.is_trial) are skipped: trials are created by the
-        installer through /license/activate_trial
-
-        Args:
-            paddle_order (PaddleTransactionOrder): Paddle order for which to create licenses
-
-        Returns:
-            list[str]: License keys, normalized UUID (XXXX-XXXX-XXXX-XXXX), in the same
-                order as the non-trial items (empty if the order only has trials)
-
-        Raises:
-            ProductLicenseNotFoundError: An item references an unknown Paddle price ID,
-                nothing is saved
-        """
-        # Prevent duplicate licenses for a single order
-        order_licenses = self.repository.get_order_licenses(paddle_order.id)
-        if order_licenses:
-            return [lcs.key for lcs in order_licenses]
-
-        # Resolve every item first: an unknown price aborts the whole order
-        catalog = [
-            (paddle_item, self._get_product_license(paddle_item)) 
-            for paddle_item in paddle_order.items
-        ]
-
-        licenses = [
-            self._create_item_license(paddle_order.id, paddle_item, product_license)
-            for paddle_item, product_license in catalog
-            if not product_license.is_trial
-        ]
-        if not licenses:
-            return []
-
-        # Save the customer and its licenses (single transaction) and return db keys
-        return self.repository.save_licenses(paddle_order.customer.build_user(), licenses)
-    
     def activate_license(
             self,
             activation_request: ActivateLicenseRequest

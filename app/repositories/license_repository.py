@@ -1,26 +1,32 @@
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 from db import Database
 from db.models import (
+    OrderItemRow,
+    OrderRow,
     ProductLicenseRow,
     ProductRow,
     UserLicenseActivationRow,
     UserLicenseRow,
     UserMachineRow,
-    UserRow,
     UserTrialRow,
 )
 
-from app.schemas.user import User, UserLicense, UserActivation, UserTrial
-from app.schemas.exceptions import InvalideLicenseKeyError, ActivationNotFoundError
+from app.schemas.user import OrderLicenses, UserLicense, UserActivation, UserTrial
+from app.schemas.exceptions import InvalideLicenseKeyError, ActivationNotFoundError, OrderNotFoundError
 
+from collections.abc import Callable
 from typing import Optional
 from datetime import datetime
 
-from sqlalchemy import exists, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 
 class LicenseRepository(Database):
+    """
+    Writes UserLicense, UserLicenseActivation, UserMachine and UserTrial (owned by AuthAPI).
+    Reads Order, OrderItem and ProductLicense (owned by PaddleSync)
+    """
 
     # --- MAPPING
 
@@ -30,7 +36,8 @@ class LicenseRepository(Database):
             id=row.id,
             key=row.license_key,
             product_license_id=row.product_license_id,
-            paddle_order_id=row.paddle_order_id,
+            paddle_item_id=row.paddle_item_id,
+            item_index=row.item_index,
             user_id=row.user_id,
             activation_seats=row.activation_seats,
             created_at=row.created_at,
@@ -89,52 +96,7 @@ class LicenseRepository(Database):
             ).returning(UserMachineRow.id)
         ).scalar_one()
 
-    @staticmethod
-    def _upsert_user(s: Session, user: User) -> int:
-        """
-        Create the user from its Paddle customer ID, or refresh it if already known
-        (email, name, marketing), subscribed_at is kept
-        Runs inside the caller's session / transaction
-
-        Args:
-            s (Session): Open session
-            user (User): User to save
-
-        Returns:
-            int: User ID
-        """
-        # subscribed_at is never sent: set by the DB on first insert, kept on update
-        stmt = insert(UserRow).values(
-            paddle_customer_id=user.paddle_customer_id,
-            email=user.email,
-            name=user.name,
-            marketing=user.marketing,
-        )
-        return s.execute(
-            stmt.on_conflict_do_update(
-                index_elements=[UserRow.paddle_customer_id],
-                set_=dict(
-                    email=stmt.excluded.email,
-                    name=stmt.excluded.name,
-                    marketing=stmt.excluded.marketing,
-                ),
-            ).returning(UserRow.id)
-        ).scalar_one()
-
     # --- GET
-
-    def license_key_exists(self, license_key: str) -> bool:
-        """
-        Check if a license key exists
-
-        Args:
-            license_key (str): License key to check
-
-        Returns:
-            bool: Exists in DB
-        """
-        with self.session() as s:
-            return bool(s.scalar(select(exists().where(UserLicenseRow.license_key == license_key))))
 
     def get_license(self, license_key: str) -> Optional[UserLicense]:
         """
@@ -155,24 +117,6 @@ class LicenseRepository(Database):
                 .where(UserLicenseRow.license_key == license_key)
             ).one_or_none()
             return self._to_license(row.UserLicenseRow, row.bundle_id) if row else None
-
-    def get_order_licenses(self, paddle_order_id: str) -> Optional[list[UserLicense]]:
-        """
-        Retrieve every license created for a Paddle order
-
-        Args:
-            paddle_order_id (str): Paddle transaction ID (txn_…)
-
-        Returns:
-            Optional[list[UserLicense]]: Licenses of the order, None if the order has no license
-        """
-        with self.session() as s:
-            rows = s.scalars(
-                select(UserLicenseRow)
-                .where(UserLicenseRow.paddle_order_id == paddle_order_id)
-                .order_by(UserLicenseRow.created_at, UserLicenseRow.id)
-            ).all()
-            return [self._to_license(r) for r in rows] or None
 
     def get_license_activations(self, license_key: str) -> list[UserActivation]:
         """
@@ -233,60 +177,84 @@ class LicenseRepository(Database):
 
     # --- WRITE
 
-    def save_licenses(self, user: User, licenses: list[UserLicense]) -> list[str]:
+    def issue_order_licenses(
+            self,
+            order_id: int,
+            new_key: Callable[[], str],
+            now: datetime
+        ) -> OrderLicenses:
         """
-        Save the licenses owner then its licenses, in a single transaction (all or nothing)
-        An existing user (same Paddle customer ID) is updated (email, name, marketing)
-        If a license already exists for the same order and product license, it is left
-        untouched and the key of the existing license is returned instead
+        Create the licenses of an order, in a single transaction (all or nothing).
+        One UserLicense per unit of each item (item_index 1..quantity), owned by the order's user.
+        Trial items (ProductLicense.is_trial) are skipped: trials are created by the
+        installer through /license/activate_trial
+
+        Idempotent: UNIQUE (paddle_item_id, item_index) makes a replay insert nothing,
+        and the licenses already created are returned instead
 
         Args:
-            user (User): Owner of every license (the order customer)
-            licenses (list[UserLicense]): Licenses to save
+            order_id (int): Order.id, from the OrderReady event
+            new_key (Callable[[], str]): Generates a license key (XXXX-XXXX-XXXX-XXXX)
+            now (datetime): Creation date, expires_at = now + ProductLicense.life_duration
 
         Returns:
-            list[str]: Stored license keys, in the same order as `licenses`
+            OrderLicenses: Order IDs and every license ID of the order,
+                ordered by (paddle_item_id, item_index), empty if the order only has trials
 
         Raises:
-            IntegrityError: Any other constraint violation (e.g. license key collision,
-                email already used by another user), the whole transaction is rolled back
+            OrderNotFoundError: Unknown order ID
+            IntegrityError: Any other constraint violation (e.g. license key collision),
+                the whole transaction is rolled back
         """
-        keys: list[str] = []
-
         with self.session() as s:
-            user_id = self._upsert_user(s, user)
+            order = s.scalar(
+                select(OrderRow)
+                .where(OrderRow.id == order_id)
+                .options(selectinload(OrderRow.items).joinedload(OrderItemRow.product_license))
+            )
+            if order is None:
+                raise OrderNotFoundError(order_id)
 
-            for license in licenses:
-                inserted_key = s.scalar(
+            item_ids: list[str] = []
+            licenses: list[dict] = []
+            for item in order.items:
+                product_license = item.product_license
+                if product_license.is_trial:
+                    continue
+
+                item_ids.append(item.paddle_item_id)
+                expires_at = now + product_license.life_duration if product_license.life_duration else None
+                for item_index in range(1, item.quantity + 1):
+                    licenses.append(dict(
+                        product_license_id=product_license.id,
+                        paddle_item_id=item.paddle_item_id,
+                        item_index=item_index,
+                        user_id=order.user_id,
+                        license_key=new_key(),
+                        activation_seats=product_license.activation_seats,
+                        created_at=now,
+                        expires_at=expires_at,
+                    ))
+
+            license_ids: list[int] = []
+            if licenses:
+                # Only this constraint is ignored: a license_key collision still raises
+                s.execute(
                     insert(UserLicenseRow)
-                    .values(
-                        license_key=license.key,
-                        product_license_id=license.product_license_id,
-                        paddle_order_id=license.paddle_order_id,
-                        user_id=user_id,
-                        activation_seats=license.activation_seats,
-                        created_at=license.created_at,
-                        expires_at=license.expires_at,
-                    )
-                    .on_conflict_do_nothing(
-                        index_elements=[UserLicenseRow.paddle_order_id, UserLicenseRow.product_license_id]
-                    )
-                    .returning(UserLicenseRow.license_key)
+                    .values(licenses)
+                    .on_conflict_do_nothing(index_elements=[UserLicenseRow.paddle_item_id, UserLicenseRow.item_index])
                 )
+                license_ids = list(s.scalars(
+                    select(UserLicenseRow.id)
+                    .where(UserLicenseRow.paddle_item_id.in_(item_ids))
+                    .order_by(UserLicenseRow.paddle_item_id, UserLicenseRow.item_index)
+                ))
 
-                if inserted_key is None:
-                    # Already exists: keep the original license and return its key
-                    inserted_key = s.scalar(
-                        select(UserLicenseRow.license_key).where(
-                            UserLicenseRow.paddle_order_id == license.paddle_order_id,
-                            UserLicenseRow.product_license_id == license.product_license_id,
-                        )
-                    )
-                    assert inserted_key is not None  # conflict guarantees the row exists
-
-                keys.append(inserted_key)
-
-        return keys
+            return OrderLicenses(
+                order_id=order.id,
+                paddle_order_id=order.paddle_order_id,
+                user_license_ids=license_ids,
+            )
 
     def save_activation(self, license_key: str, activation: UserActivation) -> int:
         """

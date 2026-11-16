@@ -1,25 +1,37 @@
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from fastapi import APIRouter, FastAPI
 
 from db import close_db
+from events import EventConsumer, close_redis
+from events.streams import ORDERS_READY
 
 from config import settings
 
+from app.events import OrderReadyHandler
 from app.routers import license
-from app.services import Licensing, Paddle
+from app.services import Licensing
+
+import asyncio
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- startup logic ---
     app.state.licensing = Licensing()
-    app.state.paddle = Paddle()
+
+    # orders:ready consumer (PaddleSync -> AuthAPI), runs alongside the HTTP endpoints
+    consumer = EventConsumer(ORDERS_READY, group="authapi")
+    consumer_task = asyncio.create_task(consumer.run(OrderReadyHandler(app.state.licensing)))
 
     yield
 
     # --- shutdown logic ---
+    # A message interrupted by the cancel stays pending in Redis and is retried
+    consumer_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await consumer_task
+    await close_redis()
     del app.state.licensing
-    del app.state.paddle
     close_db()
 
 

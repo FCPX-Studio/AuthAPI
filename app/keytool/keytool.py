@@ -93,10 +93,11 @@ class Keytool:
             separators=(",", ":")
         ).encode("utf-8")
         
-        signature = self.LICENSE_PRIVATE_KEY.sign(payload)  # Raw 64 bytes, expected format from CryptoKit
+        # Raw 64 bytes (format expected by CryptoKit), base64 encoded like the payload so it fits in JSON
+        signature = self.LICENSE_PRIVATE_KEY.sign(payload)
 
         return SignedActivation(
             payload=base64.b64encode(payload).decode(),
             signature_algorithm="Ed25519",
-            signature=signature
+            signature=base64.b64encode(signature).decode()
         )

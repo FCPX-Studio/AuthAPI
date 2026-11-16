@@ -1,80 +1,23 @@
 from fastapi import APIRouter, Request, HTTPException
-from paddle_billing.Exceptions.ApiError import ApiError
-from requests import RequestException
 
-from app.schemas.requests import PaddleTransactionCompletedEvent, ActivateLicenseRequest, ActivateTrialRequest
+from app.schemas.requests import ActivateLicenseRequest, ActivateTrialRequest
 from app.schemas.user import LicenseToken
 from app.schemas.exceptions import (
     InvalideLicenseKeyError,
     ExpiredLicenseError,
     ActivationLimitReachedError,
-    ProductLicenseNotFoundError,
     TrialNotAvailableError,
     TrialExpiredError,
 )
-from app.services import Licensing, Paddle
+from app.services import Licensing
 
 
+# Licenses are created from the orders:ready stream (app.events), not over HTTP
 router = APIRouter(
     prefix='/license',
     tags=["license"]
 )
 
-
-@router.post('/create')
-async def create(body: PaddleTransactionCompletedEvent, request: Request) -> list[str]:
-    """
-    Create license keys for an order
-    Trial items (ProductLicense.is_trial) are skipped, no license is created for them
-
-    Args:
-        body (PaddleTransactionCompletedEvent): Paddle transaction.completed body
-        request (Request): Default request argument
-
-    Returns:
-        list[str]: License keys, in the same order as the non-trial items (empty if only trials)
-
-    Raises:
-        HTTPException: 401 for bad body signature
-        HTTPException: 422 for paddle events other than `transaction.completed`
-        HTTPException: 404 if an item references an unknown product license
-        HTTPException: 502 if the customer cannot be retrieved from Paddle API
-    """
-    paddle: Paddle = request.app.state.paddle
-    licensing: Licensing = request.app.state.licensing
-
-    # Certify request comes from Paddle webhook
-    if not await paddle.validate_webhook_signature(request):
-        raise HTTPException(
-            status_code=401,
-            detail="Cannot validate webhook signature"
-        )
-
-    # Retrieve user
-    try:
-        customer = await paddle.get_customer(body.data.customer_id)
-    except ApiError as e:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Cannot retrieve Paddle customer '{body.data.customer_id}': {e.error_code}"
-        )
-    except RequestException:
-        raise HTTPException(
-            status_code=502,
-            detail="Paddle API unreachable"
-        )
-
-    # Create license
-    try:
-        paddle_order = body.build_paddle_order(customer)
-        license_keys = licensing.create_licenses(paddle_order)
-    except ProductLicenseNotFoundError as e:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Unknown product license for Paddle price '{e.paddle_price_id}'"
-        )
-
-    return license_keys
 
 @router.post('/activate', response_model=LicenseToken)
 async def activate(body: ActivateLicenseRequest, request: Request) -> LicenseToken:

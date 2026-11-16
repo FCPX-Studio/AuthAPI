@@ -6,7 +6,7 @@ FROM python:3.11-slim AS builder
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# git is needed to install the private `db` package from GitHub
+# git is needed to install the private `db` and `events` packages from GitHub
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
@@ -16,7 +16,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Install dependencies first so this layer is cached between code changes.
 # The GitHub token is mounted as a BuildKit secret only for this step and is
-# never written to an image layer (see `secrets` in docker-compose.yml).
+# never written to an image layer (see `secrets` in .github/workflows/deploy.yml).
 COPY requirements.txt .
 RUN --mount=type=secret,id=git_credentials,target=/root/.git-credentials \
     GIT_CONFIG_COUNT=1 \
@@ -36,7 +36,7 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 
 # Application code (.env is excluded via .dockerignore; secrets come from env_file at runtime)
-COPY config.py .
+COPY config.py logger.py ./
 COPY app ./app
 
 # Run as an unprivileged user
