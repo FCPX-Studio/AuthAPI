@@ -16,7 +16,7 @@ from app.schemas.exceptions import (
     TrialNotAvailableError,
     TrialExpiredError,
 )
-from app.db.repositories import LicenseRepository, ProductRepository
+from app.repositories import LicenseRepository, ProductRepository
 from app.keytool import Keytool
 
 from typing import Optional

@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 
+from db import close_db
+
 from config import settings
 
 from app.routers import license
@@ -18,6 +20,7 @@ async def lifespan(app: FastAPI):
     # --- shutdown logic ---
     del app.state.licensing
     del app.state.paddle
+    close_db()
 
 
 api_prefix = f"/{settings.API_NAME}/{settings.API_VERSION}"

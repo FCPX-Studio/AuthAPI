@@ -1,4 +1,4 @@
-from app.db.database import Repository
+from db import Database
 from db.models import ProductLicenseRow, ProductRow
 
 from app.schemas.product import ProductLicense, ProductTrial
@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy import select
 
 
-class ProductRepository(Repository):
+class ProductRepository(Database):
     """
     Read-only access to the product catalog (written by PaddleSync)
     """

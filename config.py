@@ -5,9 +5,8 @@ This module exposes a singleton `settings` instance that can be imported
 throughout the project (e.g., from config import settings).
 """
 from typing import Literal
-from urllib.parse import quote_plus
 
-from pydantic import SecretStr, computed_field
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,25 +26,7 @@ class AuthAPISettings(BaseSettings):
     API_NAME: str = "auth"
     API_VERSION: str = "v1" 
 
-    # Database
-    DB_HOST: SecretStr
-    DB_PORT: SecretStr
-    DB_NAME: SecretStr
-    DB_USER: SecretStr
-    DB_PASSWORD: SecretStr
-
-    DB_SIZE: int = 5
-
-    @computed_field
-    @property
-    def DB_URL(self) -> SecretStr:
-        # Quote user/password so characters like @ : / # don't break the URL
-        user = quote_plus(self.DB_USER.get_secret_value())
-        password = quote_plus(self.DB_PASSWORD.get_secret_value())
-        host = self.DB_HOST.get_secret_value()
-        port = self.DB_PORT.get_secret_value()
-        name = self.DB_NAME.get_secret_value()
-        return SecretStr(f"postgresql+psycopg://{user}:{password}@{host}:{port}/{name}")
+    # Database: DB_* variables are read by the shared `db` package (db.DatabaseSettings)
 
     # Licensing
     LICENSE_PRIVATE_KEY: SecretStr

@@ -213,7 +213,7 @@ app/
 ├── keytool/keytool.py           Key generation and Ed25519 token signing
 ├── schemas/                     Pydantic models, request bodies, domain exceptions
 └── db/
-    ├── database.py              Engine, session factory, transactional sessions
+    ├── (base class: db.Database, from the shared `db` package)
     ├── models/                  SQLAlchemy tables: UserLicense, UserActivation
     └── repositories/            LicenseRepository (data access)
 config.py                        Settings loaded from environment / .env

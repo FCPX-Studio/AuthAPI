@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session, joinedload
-from app.db.database import Repository
+from db import Database
 from db.models import (
     ProductLicenseRow,
     ProductRow,
@@ -20,7 +20,7 @@ from sqlalchemy import exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 
-class LicenseRepository(Repository):
+class LicenseRepository(Database):
 
     # --- MAPPING
 
