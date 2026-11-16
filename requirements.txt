@@ -25,4 +25,4 @@ uvicorn==0.54.0
 db @ git+https://github.com/FCPX-Studio/db.git@v0.2.0
 
 # Shared Redis streams events, pinned by tag
-events @ git+https://github.com/FCPX-Studio/events.git@v0.1.0
+events @ git+https://github.com/FCPX-Studio/events.git@v0.1.1
