@@ -13,7 +13,7 @@ Built with FastAPI, SQLAlchemy, PostgreSQL and Redis Streams. The schema comes f
 ```
 Paddle ─ webhook ─▶ EventsAPI ─ paddle:events ─▶ PaddleSync   (User, Order, OrderItem → Postgres)
                                                     ├─ orders:ready ─▶ AuthAPI   (UserLicense → Postgres)
-                                                    │                    ├─ orders:licensed ─▶ EventsAPI (SSE to the website)
+                                                    │                    ├─ orders:licensed ─▶ EventsAPI (confirmation page)
                                                     │                    └─ emails:license  ─▶ EmailTalker
                                                     └─ orders:refunded ─▶ AuthAPI   (revoke UserLicense)
 
@@ -31,14 +31,14 @@ AuthAPI consumes `orders:ready` (consumer group `authapi`, a background task in 
 3. Publish `OrderLicensed(order_id, paddle_order_id, user_license_ids, items)` on `orders:licensed`, and `SendLicenseEmail` on `emails:license` when there is at least one license.
 4. Return: the message is acked.
 
-**`OrderLicensed.items`** is what the website's confirmation page shows, one entry per line item: the product (`bundle_id`, `name`, `type`, `version`), the license terms (`paddle_price_id`, `name`, `description`, `activation_seats`, `life_duration_days`, `is_trial`) and its active keys (`license_key`, `item_index`, `expires_at`). Every item is listed, trials and refunded ones included. It is published for every order, even one with no key (trial only, all refunded), so the website stops waiting.
+**`OrderLicensed.items`** is what the website's confirmation page shows, one entry per line item: the product (`bundle_id`, `name`, `type`, `version`), the license terms (`paddle_price_id`, `name`, `description`, `activation_seats`, `life_duration_days`, `is_trial`) and its active keys (`license_key`, `item_index`, `expires_at`). Every item is listed, trials, assets and refunded ones included. It is published for every order, even one with no key (trials or assets only, all refunded), so the website stops waiting.
 - An item with `keys: []` is a trial (`is_trial: true`), an asset (`product.type: "asset"`), or was refunded before issuing, or revoked before a replay. All the keys of an order are committed at once, so no key follows later.
 - The items are read in the same transaction that issues the keys, so they match what was committed.
-- **`claim_hash`** is copied from `Order.claim_hash` (set by PaddleSync from the checkout custom_data). EventsAPI streams the items only to the browser that sends the matching secret, so knowing the `paddle_order_id` isn't enough to read the keys. It's read from the DB, so every path that issues licenses announces it. `None` means the order can't be claimed on the confirmation page. Logs only say `claim=yes/no`.
+- **`claim_hash`** is copied from `Order.claim_hash` (set by PaddleSync from the checkout custom_data). EventsAPI's claim route (`POST /events/v1/web/orders/{paddle_order_id}`) returns the items only to the browser that sends the matching secret, so knowing the `paddle_order_id` isn't enough to read the keys. It's read from the DB, so every path that issues licenses announces it. `None` means the order can't be claimed on the confirmation page. Logs only say `claim=yes/no`.
 
 **Idempotent**: `UNIQUE (paddle_item_id, item_index)` makes a replay insert nothing. The existing licenses are read back and the events are published again with the same ids, so consumers deduplicate on `user_license_ids`. Any error (unknown order, DB down…) leaves the message pending: it is retried, then moved to `orders:ready:dead` after 5 deliveries.
 
-**License keys in Redis**: `orders:licensed` is the one stream that carries keys, because its reader (EventsAPI's SSE to the website) never queries Postgres. The `events` package trims it by age (entries are dropped after 1 hour), and AuthAPI logs counts only, never the event. `emails:license` still carries ids only.
+**License keys in Redis**: `orders:licensed` is the one stream that carries keys, because its reader (EventsAPI's claim route, called by the website's confirmation page) never queries Postgres. The `events` package trims it by age (entries are dropped after 1 hour), and AuthAPI logs counts only, never the event. `emails:license` still carries ids only.
 
 ### License revocation (`orders:refunded`)
 

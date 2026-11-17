@@ -26,3 +26,6 @@ db @ git+https://github.com/FCPX-Studio/db.git@v0.7.2
 
 # Shared Redis streams events, pinned by tag
 events @ git+https://github.com/FCPX-Studio/events.git@v0.4.0
+
+# Shared logger (console + MQTT), pinned by tag
+logger @ git+https://github.com/FCPX-Studio/logger.git@v0.1.0
