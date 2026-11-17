@@ -79,7 +79,7 @@ class Licensing:
 
         Returns:
             OrderLicenses: Order IDs, every license ID of the order (empty if only trials), and every
-                line item with its product, license terms and keys (for LicenseIssued)
+                line item with its product, license terms and keys (for OrderLicensed)
 
         Raises:
             OrderNotFoundError: Unknown order ID

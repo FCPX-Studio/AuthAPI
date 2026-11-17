@@ -1,13 +1,13 @@
 """
 Redis stream handlers:
-- orders:ready -> UserLicense -> licenses:issued + emails:license
+- orders:ready -> UserLicense -> orders:licensed + emails:license
 - orders:refunded -> revoke UserLicense
 
 Handlers must be idempotent: EventConsumer delivers at least once and acks only when the handler
 returns. Any exception leaves the message pending: it is retried, then moved to `<stream>:dead`.
 """
-from events import EventPublisher, LicenseIssued, OrderReady, OrderRefunded, SendLicenseEmail
-from events.streams import LICENSE_EMAILS, LICENSES_ISSUED
+from events import EventPublisher, OrderLicensed, OrderReady, OrderRefunded, SendLicenseEmail
+from events.streams import LICENSE_EMAILS, ORDERS_LICENSED
 
 from app.services import Licensing
 
@@ -37,8 +37,8 @@ class OrderReadyHandler:
         # Always published, even for a trial-only or fully refunded order, so the website stops waiting.
         # Carries the license keys (items): never log the event or its items, counts only
         await self.publisher.publish(
-            LICENSES_ISSUED,
-            LicenseIssued(
+            ORDERS_LICENSED,
+            OrderLicensed(
                 order_id=order.order_id,
                 paddle_order_id=order.paddle_order_id,
                 user_license_ids=order.user_license_ids,

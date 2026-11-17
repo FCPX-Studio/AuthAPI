@@ -20,14 +20,14 @@ class UserLicense(BaseModel):
     bundle_id: Optional[str] = None                 # Licensed product (FxPlug ID), filled on read
 
 class OrderLicenses(BaseModel):
-    """Licenses of an order, as published in LicenseIssued / SendLicenseEmail"""
+    """Licenses of an order, as published in OrderLicensed / SendLicenseEmail"""
     order_id: int
     paddle_order_id: str                            # Paddle transaction ID (txn_…)
     user_license_ids: list[int]                     # Ordered by (paddle_item_id, item_index)
     # Every line item with its product, license terms and keys, ordered by paddle_item_id.
-    # The events model itself: it is the LicenseIssued contract. Holds license keys, never log it
+    # The events model itself: it is the OrderLicensed contract. Holds license keys, never log it
     items: list[IssuedItem]
-    # Order.claim_hash, copied into LicenseIssued: EventsAPI streams the items only to the browser holding the
+    # Order.claim_hash, copied into OrderLicensed: EventsAPI streams the items only to the browser holding the
     # matching secret. None = the order can't be claimed on the confirmation page. Hidden from repr, never log it
     claim_hash: Optional[str] = Field(default=None, repr=False)
 

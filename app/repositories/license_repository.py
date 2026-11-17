@@ -185,7 +185,7 @@ class LicenseRepository(Database):
     @staticmethod
     def _to_issued_item(item: OrderItemRow, keys: list[IssuedKey]) -> IssuedItem:
         """
-        A line item as published in LicenseIssued. Its product_license, product and version must be loaded
+        A line item as published in OrderLicensed. Its product_license, product and version must be loaded
         """
         product_license = item.product_license
         product = product_license.product
@@ -221,6 +221,7 @@ class LicenseRepository(Database):
         Skipped items:
         - trial items (ProductLicense.is_trial): trials are created by the installer
           through /license/activate_trial
+        - asset items (Product.type "asset"): assets are downloads, a key would unlock nothing
         - refunded items (OrderItem.refunded_at): the refund arrived before the licenses were issued
 
         The order's items are locked (FOR SHARE) until the commit: PaddleSync's refund UPDATE of an
@@ -231,9 +232,9 @@ class LicenseRepository(Database):
         and the licenses already created are returned instead (active ones only: a replay never
         announces or emails a revoked license)
 
-        Also builds what LicenseIssued shows the website, from the same rows and transaction: every item
+        Also builds what OrderLicensed shows the website, from the same rows and transaction: every item
         of the order (trial and refunded ones included) with its product, license terms and active keys.
-        An item with no key is a trial, refunded before issuing, or revoked before a replay. All the keys of
+        An item with no key is a trial, an asset, refunded before issuing, or revoked before a replay. All the keys of
         an order are committed here at once, so no key can follow later.
         The order's claim_hash is read from the DB too, so every path that issues licenses (redelivery,
         dead-letter replay, a future admin path) announces it
@@ -257,7 +258,7 @@ class LicenseRepository(Database):
             if order is None:
                 raise OrderNotFoundError(order_id)
 
-            # Product and version are read for LicenseIssued. Only OrderItem is locked (OF OrderItem)
+            # Product and version are read for OrderLicensed. Only OrderItem is locked (OF OrderItem)
             items = s.scalars(
                 select(OrderItemRow)
                 .where(OrderItemRow.order_id == order_id)
@@ -274,7 +275,11 @@ class LicenseRepository(Database):
             licenses: list[dict] = []
             for item in items:
                 product_license = item.product_license
-                if product_license.is_trial or item.refunded_at is not None:
+                if (
+                    product_license.is_trial
+                    or product_license.product.type == "asset"
+                    or item.refunded_at is not None
+                ):
                     continue
 
                 item_ids.append(item.paddle_item_id)
