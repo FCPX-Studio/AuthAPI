@@ -78,7 +78,8 @@ class Licensing:
             order_id (int): Order.id, from the OrderReady event
 
         Returns:
-            OrderLicenses: Order IDs and every license ID of the order (empty if only trials)
+            OrderLicenses: Order IDs, every license ID of the order (empty if only trials), and every
+                line item with its product, license terms and keys (for LicenseIssued)
 
         Raises:
             OrderNotFoundError: Unknown order ID

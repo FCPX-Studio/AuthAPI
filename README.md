@@ -26,14 +26,18 @@ AuthAPI never talks to Paddle and never creates customers. PaddleSync validates 
 
 AuthAPI consumes `orders:ready` (consumer group `authapi`, a background task in the FastAPI lifespan, see [app/events/handlers.py](app/events/handlers.py)):
 
-1. Load the `Order`, its items and their `ProductLicense` from Postgres.
+1. Load the `Order`, its items, their `ProductLicense`, `Product` and current `ProductVersion` from Postgres.
 2. For each item that is not a trial (`ProductLicense.is_trial`) and not refunded (`OrderItem.refunded_at`), create `quantity` `UserLicense` rows (`item_index` 1..N), owned by `Order.user_id`, with the catalog `activation_seats` and `expires_at = now + life_duration`.
-3. Publish `LicenseIssued(order_id, paddle_order_id, user_license_ids)` on `licenses:issued` (even for a trial-only order, with an empty list), and `SendLicenseEmail` on `emails:license` when there is at least one license.
+3. Publish `LicenseIssued(order_id, paddle_order_id, user_license_ids, items)` on `licenses:issued`, and `SendLicenseEmail` on `emails:license` when there is at least one license.
 4. Return: the message is acked.
+
+**`LicenseIssued.items`** is what the website's confirmation page shows, one entry per line item: the product (`bundle_id`, `name`, `type`, `version`), the license terms (`paddle_price_id`, `name`, `description`, `activation_seats`, `life_duration_days`, `is_trial`) and its active keys (`license_key`, `item_index`, `expires_at`). Every item is listed, trials and refunded ones included. It is published for every order, even one with no key (trial only, all refunded), so the website stops waiting.
+- An item with `keys: []` is a trial (`is_trial: true`), or was refunded before issuing, or revoked before a replay. All the keys of an order are committed at once, so no key follows later.
+- The items are read in the same transaction that issues the keys, so they match what was committed.
 
 **Idempotent**: `UNIQUE (paddle_item_id, item_index)` makes a replay insert nothing. The existing licenses are read back and the events are published again with the same ids, so consumers deduplicate on `user_license_ids`. Any error (unknown order, DB down…) leaves the message pending: it is retried, then moved to `orders:ready:dead` after 5 deliveries.
 
-License keys never go through Redis: consumers read them from Postgres.
+**License keys in Redis**: `licenses:issued` is the one stream that carries keys, because its reader (EventsAPI's SSE to the website) never queries Postgres. The `events` package trims it by age (entries are dropped after 1 hour), and AuthAPI logs counts only, never the event. `emails:license` still carries ids only.
 
 ### License revocation (`orders:refunded`)
 

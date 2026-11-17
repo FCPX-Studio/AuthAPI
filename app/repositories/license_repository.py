@@ -12,8 +12,11 @@ from db.models import (
 )
 
 from app.schemas.user import OrderLicenses, UserLicense, UserActivation, UserTrial
+
+from events import IssuedItem, IssuedKey, IssuedLicenseTerms, IssuedProduct
 from app.schemas.exceptions import InvalideLicenseKeyError, ActivationNotFoundError, OrderNotFoundError
 
+from collections import defaultdict
 from collections.abc import Callable
 from typing import Optional
 from datetime import datetime
@@ -179,6 +182,33 @@ class LicenseRepository(Database):
 
     # --- WRITE
 
+    @staticmethod
+    def _to_issued_item(item: OrderItemRow, keys: list[IssuedKey]) -> IssuedItem:
+        """
+        A line item as published in LicenseIssued. Its product_license, product and version must be loaded
+        """
+        product_license = item.product_license
+        product = product_license.product
+        return IssuedItem(
+            paddle_item_id=item.paddle_item_id,
+            quantity=item.quantity,
+            product=IssuedProduct(
+                bundle_id=product.bundle_id,
+                name=product.name,
+                type=product.type,  # type: ignore[arg-type]  # CHECK (type IN ('plugin', 'asset'))
+                version=product.version.label if product.version is not None else None,
+            ),
+            license=IssuedLicenseTerms(
+                paddle_price_id=product_license.paddle_price_id,
+                name=product_license.name,
+                description=product_license.description,
+                activation_seats=product_license.activation_seats,
+                life_duration_days=product_license.life_duration.days if product_license.life_duration else None,
+                is_trial=product_license.is_trial,
+            ),
+            keys=keys,
+        )
+
     def issue_order_licenses(
             self,
             order_id: int,
@@ -201,14 +231,19 @@ class LicenseRepository(Database):
         and the licenses already created are returned instead (active ones only: a replay never
         announces or emails a revoked license)
 
+        Also builds what LicenseIssued shows the website, from the same rows and transaction: every item
+        of the order (trial and refunded ones included) with its product, license terms and active keys.
+        An item with no key is a trial, refunded before issuing, or revoked before a replay. All the keys of
+        an order are committed here at once, so no key can follow later
+
         Args:
             order_id (int): Order.id, from the OrderReady event
             new_key (Callable[[], str]): Generates a license key (XXXX-XXXX-XXXX-XXXX)
             now (datetime): Creation date, expires_at = now + ProductLicense.life_duration
 
         Returns:
-            OrderLicenses: Order IDs and every active license ID of the order,
-                ordered by (paddle_item_id, item_index), empty if the order only has trials or refunds
+            OrderLicenses: Order IDs, every active license ID of the order ordered by
+                (paddle_item_id, item_index) (empty if the order only has trials or refunds), and its items
 
         Raises:
             OrderNotFoundError: Unknown order ID
@@ -220,10 +255,16 @@ class LicenseRepository(Database):
             if order is None:
                 raise OrderNotFoundError(order_id)
 
+            # Product and version are read for LicenseIssued. Only OrderItem is locked (OF OrderItem)
             items = s.scalars(
                 select(OrderItemRow)
                 .where(OrderItemRow.order_id == order_id)
-                .options(joinedload(OrderItemRow.product_license))
+                .options(
+                    joinedload(OrderItemRow.product_license)
+                    .joinedload(ProductLicenseRow.product)
+                    .joinedload(ProductRow.version)
+                )
+                .order_by(OrderItemRow.paddle_item_id)
                 .with_for_update(read=True, of=OrderItemRow)
             ).all()
 
@@ -249,6 +290,7 @@ class LicenseRepository(Database):
                     ))
 
             license_ids: list[int] = []
+            keys_by_item: dict[str, list[IssuedKey]] = defaultdict(list)
             if licenses:
                 # Only this constraint is ignored: a license_key collision still raises
                 s.execute(
@@ -256,16 +298,29 @@ class LicenseRepository(Database):
                     .values(licenses)
                     .on_conflict_do_nothing(index_elements=[UserLicenseRow.paddle_item_id, UserLicenseRow.item_index])
                 )
-                license_ids = list(s.scalars(
-                    select(UserLicenseRow.id)
+                # The ids and the keys come from the same rows, so they can't disagree
+                rows = s.execute(
+                    select(
+                        UserLicenseRow.id,
+                        UserLicenseRow.paddle_item_id,
+                        UserLicenseRow.item_index,
+                        UserLicenseRow.license_key,
+                        UserLicenseRow.expires_at,
+                    )
                     .where(UserLicenseRow.paddle_item_id.in_(item_ids), UserLicenseRow.revoked_at.is_(None))
                     .order_by(UserLicenseRow.paddle_item_id, UserLicenseRow.item_index)
-                ))
+                )
+                for row in rows:
+                    license_ids.append(row.id)
+                    keys_by_item[row.paddle_item_id].append(
+                        IssuedKey(license_key=row.license_key, item_index=row.item_index, expires_at=row.expires_at)
+                    )
 
             return OrderLicenses(
                 order_id=order.id,
                 paddle_order_id=order.paddle_order_id,
                 user_license_ids=license_ids,
+                items=[self._to_issued_item(item, keys_by_item.get(item.paddle_item_id, [])) for item in items],
             )
 
     def revoke_item_licenses(self, paddle_item_ids: list[str], reason: str, now: datetime) -> list[int]:

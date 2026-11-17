@@ -34,13 +34,15 @@ class OrderReadyHandler:
         order = await asyncio.to_thread(self.licensing.create_licenses, event.order_id)
 
         # Published before returning, so a crash replays the event (consumers dedupe on the ids).
-        # Always published, even for a trial-only order, so the website stops waiting
+        # Always published, even for a trial-only or fully refunded order, so the website stops waiting.
+        # Carries the license keys (items): never log the event or its items, counts only
         await self.publisher.publish(
             LICENSES_ISSUED,
             LicenseIssued(
                 order_id=order.order_id,
                 paddle_order_id=order.paddle_order_id,
                 user_license_ids=order.user_license_ids,
+                items=order.items,
             ),
         )
         if order.user_license_ids:
@@ -50,10 +52,11 @@ class OrderReadyHandler:
             )
 
         logger.info(
-            "Issued %d license(s) for order %s (%s)",
+            "Issued %d license(s) for order %s (%s), %d item(s)",
             len(order.user_license_ids),
             order.order_id,
             order.paddle_order_id,
+            len(order.items),
         )
 
 

@@ -1,5 +1,7 @@
 from pydantic import AwareDatetime, BaseModel
 
+from events import IssuedItem
+
 from typing import Optional
 
 
@@ -22,6 +24,9 @@ class OrderLicenses(BaseModel):
     order_id: int
     paddle_order_id: str                            # Paddle transaction ID (txn_…)
     user_license_ids: list[int]                     # Ordered by (paddle_item_id, item_index)
+    # Every line item with its product, license terms and keys, ordered by paddle_item_id.
+    # The events model itself: it is the LicenseIssued contract. Holds license keys, never log it
+    items: list[IssuedItem]
 
 class UserActivation(BaseModel):
     id: Optional[int] = None                        # Set by the DB
