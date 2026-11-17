@@ -43,6 +43,7 @@ class OrderReadyHandler:
                 paddle_order_id=order.paddle_order_id,
                 user_license_ids=order.user_license_ids,
                 items=order.items,
+                claim_hash=order.claim_hash,
             ),
         )
         if order.user_license_ids:
@@ -51,12 +52,14 @@ class OrderReadyHandler:
                 SendLicenseEmail(order_id=order.order_id, user_license_ids=order.user_license_ids),
             )
 
+        # claim=yes/no only: never the hash itself
         logger.info(
-            "Issued %d license(s) for order %s (%s), %d item(s)",
+            "Issued %d license(s) for order %s (%s), %d item(s), claim=%s",
             len(order.user_license_ids),
             order.order_id,
             order.paddle_order_id,
             len(order.items),
+            "yes" if order.claim_hash else "no",
         )
 
 

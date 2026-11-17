@@ -234,7 +234,9 @@ class LicenseRepository(Database):
         Also builds what LicenseIssued shows the website, from the same rows and transaction: every item
         of the order (trial and refunded ones included) with its product, license terms and active keys.
         An item with no key is a trial, refunded before issuing, or revoked before a replay. All the keys of
-        an order are committed here at once, so no key can follow later
+        an order are committed here at once, so no key can follow later.
+        The order's claim_hash is read from the DB too, so every path that issues licenses (redelivery,
+        dead-letter replay, a future admin path) announces it
 
         Args:
             order_id (int): Order.id, from the OrderReady event
@@ -321,6 +323,7 @@ class LicenseRepository(Database):
                 paddle_order_id=order.paddle_order_id,
                 user_license_ids=license_ids,
                 items=[self._to_issued_item(item, keys_by_item.get(item.paddle_item_id, [])) for item in items],
+                claim_hash=order.claim_hash,
             )
 
     def revoke_item_licenses(self, paddle_item_ids: list[str], reason: str, now: datetime) -> list[int]:

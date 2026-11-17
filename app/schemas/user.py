@@ -1,4 +1,4 @@
-from pydantic import AwareDatetime, BaseModel
+from pydantic import AwareDatetime, BaseModel, Field
 
 from events import IssuedItem
 
@@ -27,6 +27,9 @@ class OrderLicenses(BaseModel):
     # Every line item with its product, license terms and keys, ordered by paddle_item_id.
     # The events model itself: it is the LicenseIssued contract. Holds license keys, never log it
     items: list[IssuedItem]
+    # Order.claim_hash, copied into LicenseIssued: EventsAPI streams the items only to the browser holding the
+    # matching secret. None = the order can't be claimed on the confirmation page. Hidden from repr, never log it
+    claim_hash: Optional[str] = Field(default=None, repr=False)
 
 class UserActivation(BaseModel):
     id: Optional[int] = None                        # Set by the DB
