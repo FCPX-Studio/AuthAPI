@@ -31,6 +31,9 @@ class AuthAPISettings(BaseSettings):
     # Licensing
     LICENSE_PRIVATE_KEY: SecretStr
     LICENSE_TOKEN_FORMAT_VERSION: int = 1
+    # Public label of the LICENSE_PRIVATE_KEY pair, written as `keyId` into signed tokens: the product
+    # picks the matching public key from it. Change it together with the key pair (rotation)
+    LICENSE_KEY_ID: str = "k1"
 
 
 settings = AuthAPISettings() # type: ignore

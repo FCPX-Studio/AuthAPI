@@ -17,7 +17,7 @@ class UserLicense(BaseModel):
     expires_at: Optional[AwareDatetime] = None
     revoked_at: Optional[AwareDatetime] = None      # None = active
     revoked_reason: Optional[str] = None            # refund | chargeback | manual
-    bundle_id: Optional[str] = None                 # Licensed product (FxPlug ID), filled on read
+    bundle_id: Optional[str] = None                 # Licensed extension ID (Product.bundle_id), filled on read
 
 class OrderLicenses(BaseModel):
     """Licenses of an order, as published in OrderLicensed / SendLicenseEmail"""

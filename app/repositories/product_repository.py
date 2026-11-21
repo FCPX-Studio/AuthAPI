@@ -22,7 +22,7 @@ class ProductRepository(Database):
         archived trial license offers no trial
 
         Args:
-            bundle_id (str): Product FxPlug ID, sent by the installer
+            bundle_id (str): Extension ID (Product.bundle_id), sent by the installer
 
         Returns:
             Optional[ProductTrial]: Trial offer, None if the product is unknown, archived or has no active trial

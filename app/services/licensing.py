@@ -43,7 +43,7 @@ class Licensing:
 
         Args:
             license (License): License to validate
-            product_id: Product FxPlug ID sent by the installer (Product.bundle_id)
+            product_id: Extension ID sent by the installer (Product.bundle_id), shared by all its FxPlugs
 
         Returns:
             bool: True if bad license, else False
@@ -153,6 +153,8 @@ class Licensing:
         # IDs stay strings in the token and response: contract with the shipped plugins
         signed_activation = self.keytool.create_signed_license_activation(
             format_version=settings.LICENSE_TOKEN_FORMAT_VERSION,
+            key_id=settings.LICENSE_KEY_ID,
+            kind="license",
             license_id=str(license.id),
             product_id=activation_request.product_id,
             fingerprint=activation.machine_fingerprint,
@@ -206,6 +208,8 @@ class Licensing:
         # IDs stay strings in the token and response: contract with the shipped plugins
         signed_activation = self.keytool.create_signed_license_activation(
             format_version=settings.LICENSE_TOKEN_FORMAT_VERSION,
+            key_id=settings.LICENSE_KEY_ID,
+            kind="trial",
             license_id=str(trial.id),
             product_id=bundle_id,
             fingerprint=trial.machine_fingerprint,

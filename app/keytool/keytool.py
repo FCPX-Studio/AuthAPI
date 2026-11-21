@@ -7,7 +7,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import base64
 import json
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
+
+# Token `kind`: tells the product whether `licenseId` is a UserLicense.id or a UserTrial.id
+TokenKind = Literal["license", "trial"]
 
 
 class Keytool:
@@ -59,6 +62,8 @@ class Keytool:
     def create_signed_license_activation(
             self,
             format_version: int,
+            key_id: str,
+            kind: TokenKind,
             license_id: str,
             product_id: str,
             fingerprint: str,
@@ -70,17 +75,21 @@ class Keytool:
 
         Args:
             format_version (int): Signing format version
-            license_id (str): ID of the license used
-            product_id (str): ID of the product link to the license
+            key_id (str): Public label of the signing key pair, the product picks its public key from it
+            kind (TokenKind): "license" (licenseId = UserLicense.id) or "trial" (licenseId = UserTrial.id)
+            license_id (str): ID of the license (or trial) used
+            product_id (str): Extension ID linked to the license (Product.bundle_id)
             fingerprint (str): User machine fingerprint
             issued_at (datetime): Date of activation
-            expire_at (datetime, optional): Date of license expiration
+            expire_at (datetime, optional): Date of license expiration, None = perpetual
 
         Returns:
-            SignedActivation: _description_
+            SignedActivation: Base64 payload and its Ed25519 signature
         """
         token = {
             "formatVersion": format_version,
+            "keyId": key_id,
+            "kind": kind,
             "licenseId": license_id,
             "productId": product_id,
             "machineFingerprint": fingerprint,

@@ -88,6 +88,7 @@ Copy [env.example](env.example) to `.env` and fill it in. On the VPS, the env fi
 | ------------------------------ | -------- | ----------- | ------------------------------------------------------------------ |
 | `LICENSE_PRIVATE_KEY`          | yes      | —           | Base64 of the raw 32-byte Ed25519 private key used to sign tokens  |
 | `LICENSE_TOKEN_FORMAT_VERSION` | no       | `1`         | `formatVersion` written into signed tokens                         |
+| `LICENSE_KEY_ID`               | no       | `k1`        | `keyId` written into signed tokens: public label of the key pair, change it with the key |
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | yes | — | Postgres connection (or `DB_URL`), read by `db.DatabaseSettings` |
 | `DB_POOL_SIZE`                 | no       | `5`         | Connections kept open in the pool                                  |
 | `REDIS_HOST`, `REDIS_PORT`     | no       | `localhost`, `6379` | Redis connection, read by `events.RedisSettings`           |
@@ -137,7 +138,7 @@ Validates a license key for a product and registers the calling machine.
 ```json
 {
   "license_key": "abcd-efgh-jkmn-pqrs",
-  "product_id": "com.fcpxstudio.example",
+  "product_id": "com.fcpxstudio.DepthStudio",
   "machine_fingerprint": "SHA256:<64 hex chars>",
   "machine_name": "Studio Mac",
   "app_version": "1.2.0",
@@ -146,7 +147,7 @@ Validates a license key for a product and registers the calling machine.
 }
 ```
 
-`product_id` is the FxPlug bundle ID (`Product.bundle_id`).
+`product_id` is the extension ID (`Product.bundle_id`, e.g. `com.fcpxstudio.DepthStudio`), not the bundle ID of one FxPlug: every FxPlug of an extension shares the same license and the same token.
 
 **Response** `200`
 
@@ -189,22 +190,37 @@ Same body without `license_key`. Creates (or refreshes) the trial of the product
 ```json
 {
   "formatVersion": 1,
+  "keyId": "k1",
+  "kind": "license",
   "licenseId": "42",
-  "productId": "com.fcpxstudio.example",
+  "productId": "com.fcpxstudio.DepthStudio",
   "machineFingerprint": "SHA256:…",
   "issuedAt": "2026-11-13T10:00:00Z",
   "expiresAt": null
 }
 ```
 
+| Field                | Description |
+| -------------------- | ----------- |
+| `formatVersion`      | `LICENSE_TOKEN_FORMAT_VERSION`. The product rejects a version it doesn't know. |
+| `keyId`              | `LICENSE_KEY_ID`, public label of the signing key pair (not secret). The product embeds `keyId → public key` and rejects an unknown `keyId`. On a key rotation, a new pair gets a new `keyId`; dropping the old one from the product invalidates every token it signed. |
+| `kind`               | `"license"` (`licenseId` = `UserLicense.id`) or `"trial"` (`licenseId` = `UserTrial.id`, the two id spaces overlap). |
+| `productId`          | Extension ID (`Product.bundle_id`), shared by every FxPlug of the extension: one token per extension and machine. |
+| `machineFingerprint` | As sent by the installer (`UserMachine.machine_fingerprint`). |
+| `issuedAt`           | Activation date. |
+| `expiresAt`          | `null` = perpetual license. Trial: end of the trial. Expiring license: `UserLicense.expires_at`. |
+
 Dates are ISO 8601 UTC (`yyyy-MM-ddTHH:mm:ssZ`) so Swift's `ISO8601DateFormatter` can parse them. `license.signature` is the base64 encoding of the raw 64-byte Ed25519 signature: decode it (`Data(base64Encoded:)`) and pass it, with the decoded payload, to CryptoKit's `Curve25519.Signing.PublicKey.isValidSignature(_:for:)`.
 
 The product should check that:
 
-1. the signature is valid for the payload with the embedded public key,
-2. `productId` matches the product,
-3. `machineFingerprint` matches the current machine,
-4. `expiresAt` is `null` or in the future.
+1. `keyId` names one of its embedded public keys, and the signature is valid for the payload with that key (read nothing else before this check),
+2. `formatVersion` is supported,
+3. `productId` matches the extension ID compiled into the FxPlug,
+4. `machineFingerprint` matches the current machine,
+5. `issuedAt` is not in the future (a few minutes of clock skew allowed), and `expiresAt` is `null` or in the future.
+
+`kind` then tells a trial from a license (trial UI, watermark).
 
 The license key itself is never written into the token.
 

@@ -105,7 +105,7 @@ class LicenseRepository(Database):
 
     def get_license(self, license_key: str) -> Optional[UserLicense]:
         """
-        Retrieve a license from its key, with the FxPlug ID of the licensed product
+        Retrieve a license from its key, with the extension ID (Product.bundle_id) of the licensed product
         (UserLicense -> ProductLicense -> Product)
 
         Args:
